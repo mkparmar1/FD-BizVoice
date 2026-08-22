@@ -1,5 +1,10 @@
 package com.example.ui.screens.contacts
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,9 +25,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Contacts
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -31,11 +45,13 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,10 +64,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.data.model.Contact
 import com.example.data.repository.BizVoiceRepository
 import com.example.telephony.CallManager
@@ -74,12 +93,43 @@ fun ContactsScreen(
     onNavigateToContactDetail: (String) -> Unit,
     onNavigateToAddContact: () -> Unit
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val allContacts by repository.allContactsFlow.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf(ContactsFilter.ALL) }
     var isRefreshing by remember { mutableStateOf(false) }
+    var isSyncing by remember { mutableStateOf(false) }
+    var syncBannerMessage by remember { mutableStateOf<String?>(null) }
+    var showSyncModal by remember { mutableStateOf(false) }
+
+    val hasContactsPermission = remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val requestContactsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasContactsPermission.value = isGranted
+        if (isGranted) {
+            isSyncing = true
+            scope.launch {
+                val res = repository.syncDeviceContacts()
+                isSyncing = false
+                if (res.isSuccess) {
+                    val count = res.getOrDefault(0)
+                    syncBannerMessage = "Successfully synced $count mobile contact(s) into BizVoice"
+                } else {
+                    syncBannerMessage = res.exceptionOrNull()?.message ?: "Failed to sync mobile contacts"
+                }
+            }
+        } else {
+            syncBannerMessage = "Permission denied. Allow Contacts permission in app settings to sync."
+        }
+    }
 
     LaunchedEffect(Unit) {
         repository.refreshContacts()
@@ -103,6 +153,10 @@ fun ContactsScreen(
         }.sortedBy { it.name }
     }
 
+    val deviceContactCount = remember(allContacts) {
+        allContacts.count { it.isDeviceContact }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -112,11 +166,28 @@ fun ContactsScreen(
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
-            // Uniform Top Header
+            // Uniform Top Header with Sync & Refresh actions
             MainTabHeader(
                 title = "Contacts",
                 subtitle = if (filteredContacts.isNotEmpty()) "${filteredContacts.size} contacts" else "Directory"
             ) {
+                // Sync Mobile Contacts Action Button
+                IconButton(
+                    onClick = { showSyncModal = true },
+                    modifier = Modifier.testTag("sync_mobile_contacts_button")
+                ) {
+                    if (isSyncing) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Sync,
+                            contentDescription = "Sync Mobile Contacts",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                // Cloud Refresh Action Button
                 IconButton(
                     onClick = {
                         isRefreshing = true
@@ -131,6 +202,54 @@ fun ContactsScreen(
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh Contacts")
+                    }
+                }
+            }
+
+            // Sync Status Notification Banner
+            AnimatedVisibility(visible = syncBannerMessage != null) {
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (syncBannerMessage?.startsWith("Successfully") == true)
+                            Color(0xFFDCFCE7)
+                        else
+                            MaterialTheme.colorScheme.errorContainer
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = if (syncBannerMessage?.startsWith("Successfully") == true) Icons.Default.Check else Icons.Default.PhoneAndroid,
+                                contentDescription = null,
+                                tint = if (syncBannerMessage?.startsWith("Successfully") == true) CallGreen else MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = syncBannerMessage ?: "",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                color = if (syncBannerMessage?.startsWith("Successfully") == true) Color(0xFF166534) else MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                        IconButton(
+                            onClick = { syncBannerMessage = null },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
             }
@@ -155,12 +274,13 @@ fun ContactsScreen(
                     .testTag("contacts_search_input")
             )
 
-            // Filter Chips
+            // Filter Chips + Quick Sync Mobile Pill
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 val chipColors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -188,7 +308,12 @@ fun ContactsScreen(
                 FilterChip(
                     selected = selectedFilter == ContactsFilter.DEVICE_CONTACTS,
                     onClick = { selectedFilter = ContactsFilter.DEVICE_CONTACTS },
-                    label = { Text("Device", fontWeight = if (selectedFilter == ContactsFilter.DEVICE_CONTACTS) FontWeight.Bold else FontWeight.Medium) },
+                    label = {
+                        Text(
+                            text = if (deviceContactCount > 0) "Mobile ($deviceContactCount)" else "Mobile",
+                            fontWeight = if (selectedFilter == ContactsFilter.DEVICE_CONTACTS) FontWeight.Bold else FontWeight.Medium
+                        )
+                    },
                     colors = chipColors,
                     border = null,
                     shape = RoundedCornerShape(16.dp)
@@ -201,9 +326,24 @@ fun ContactsScreen(
                 EmptyStateView(
                     icon = Icons.Default.Contacts,
                     title = if (searchQuery.isNotBlank()) "No Contacts Found" else "No Contacts",
-                    description = if (searchQuery.isNotBlank()) "No contacts matching '$searchQuery'" else "Add your business clients, partners, or team members.",
-                    actionLabel = if (searchQuery.isBlank()) "Add First Contact" else null,
-                    onActionClick = onNavigateToAddContact,
+                    description = if (searchQuery.isNotBlank())
+                        "No contacts matching '$searchQuery'"
+                    else if (selectedFilter == ContactsFilter.DEVICE_CONTACTS)
+                        "You haven't synced your mobile phonebook contacts into BizVoice yet."
+                    else
+                        "Add your business clients, or sync your phonebook contacts to call with BizVoice.",
+                    actionLabel = if (searchQuery.isBlank() && selectedFilter == ContactsFilter.DEVICE_CONTACTS)
+                        "Sync Mobile Contacts"
+                    else if (searchQuery.isBlank())
+                        "Add First Contact"
+                    else null,
+                    onActionClick = {
+                        if (selectedFilter == ContactsFilter.DEVICE_CONTACTS) {
+                            showSyncModal = true
+                        } else {
+                            onNavigateToAddContact()
+                        }
+                    },
                     modifier = Modifier.weight(1f)
                 )
             } else {
@@ -243,6 +383,104 @@ fun ContactsScreen(
             Icon(Icons.Default.Add, contentDescription = "Add Contact")
         }
     }
+
+    // SYNC MOBILE CONTACTS DIALOG
+    if (showSyncModal) {
+        AlertDialog(
+            onDismissRequest = { if (!isSyncing) showSyncModal = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.PhoneAndroid,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Sync Mobile Contacts",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Import phone numbers and names from your mobile device contact directory into BizVoice so you can place VoIP calls and see caller IDs seamlessly.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "Current Status",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (deviceContactCount > 0)
+                                    "• $deviceContactCount mobile contacts synced in BizVoice"
+                                else
+                                    "• No mobile contacts synced yet",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "• Mobile contacts stay on your device and are identified with a Mobile tag.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val permissionCheck = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
+                        if (permissionCheck == PackageManager.PERMISSION_GRANTED) {
+                            isSyncing = true
+                            showSyncModal = false
+                            scope.launch {
+                                val res = repository.syncDeviceContacts()
+                                isSyncing = false
+                                if (res.isSuccess) {
+                                    val count = res.getOrDefault(0)
+                                    syncBannerMessage = "Successfully synced $count mobile contact(s) into BizVoice!"
+                                } else {
+                                    syncBannerMessage = res.exceptionOrNull()?.message ?: "Failed to sync mobile contacts"
+                                }
+                            }
+                        } else {
+                            showSyncModal = false
+                            requestContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+                        }
+                    },
+                    enabled = !isSyncing,
+                    modifier = Modifier.testTag("confirm_sync_contacts_button")
+                ) {
+                    if (isSyncing) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    Text(if (deviceContactCount > 0) "Re-Sync Now" else "Sync Now")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showSyncModal = false },
+                    enabled = !isSyncing
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -269,13 +507,31 @@ private fun ContactItemRow(
             Spacer(modifier = Modifier.width(14.dp))
 
             Column {
-                Text(
-                    text = contact.name,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = contact.name,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+
+                    if (contact.isDeviceContact) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                        ) {
+                            Text(
+                                text = "Mobile",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(2.dp))
 
@@ -306,3 +562,4 @@ private fun ContactItemRow(
         }
     }
 }
+

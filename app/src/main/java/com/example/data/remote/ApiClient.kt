@@ -45,10 +45,14 @@ class ApiClient(private val sessionManager: SessionManager) {
         .build()
 
     fun getService(): LaravelApiService {
-        val baseUrl = if (sessionManager.baseApiUrl.endsWith("/")) {
-            sessionManager.baseApiUrl
+        var rawUrl = sessionManager.baseApiUrl.trim()
+        if (!rawUrl.endsWith("/")) {
+            rawUrl = "$rawUrl/"
+        }
+        val baseUrl = if (!rawUrl.contains("/api/v1") && !rawUrl.contains("/api/")) {
+            "${rawUrl}api/v1/"
         } else {
-            "${sessionManager.baseApiUrl}/"
+            rawUrl
         }
 
         return Retrofit.Builder()

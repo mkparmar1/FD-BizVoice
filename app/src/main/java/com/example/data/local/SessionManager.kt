@@ -26,12 +26,13 @@ class SessionManager(context: Context) {
         private const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
         private const val KEY_DEVICE_TOKEN = "device_push_token"
         private const val KEY_THEME_MODE = "theme_mode" // "SYSTEM", "LIGHT", "DARK"
+        private const val KEY_TWILIO_VOICE_TOKEN = "twilio_voice_token"
 
         const val THEME_SYSTEM = "SYSTEM"
         const val THEME_LIGHT = "LIGHT"
         const val THEME_DARK = "DARK"
 
-        const val DEFAULT_API_URL = "https://api.bizvoice-calling.example.com/api"
+        const val DEFAULT_API_URL = "http://localhost/api/v1"
     }
 
     private val _authStateFlow = MutableStateFlow(isLoggedIn())
@@ -43,8 +44,8 @@ class SessionManager(context: Context) {
     private val _themeModeFlow = MutableStateFlow(prefs.getString(KEY_THEME_MODE, THEME_SYSTEM) ?: THEME_SYSTEM)
     val themeModeFlow: StateFlow<String> = _themeModeFlow.asStateFlow()
 
-    fun saveAuth(token: String, user: User) {
-        prefs.edit()
+    fun saveAuth(token: String, user: User, twilioToken: String? = null) {
+        val editor = prefs.edit()
             .putString(KEY_AUTH_TOKEN, token)
             .putString(KEY_USER_ID, user.id)
             .putString(KEY_USER_NAME, user.name)
@@ -53,10 +54,22 @@ class SessionManager(context: Context) {
             .putString(KEY_USER_STATUS, user.status)
             .putString(KEY_USER_ROLE, user.role)
             .putString(KEY_USER_COMPANY, user.company)
-            .apply()
+
+        if (twilioToken != null) {
+            editor.putString(KEY_TWILIO_VOICE_TOKEN, twilioToken)
+        }
+        editor.apply()
 
         _authStateFlow.value = true
         _currentUserFlow.value = user
+    }
+
+    fun saveTwilioVoiceToken(token: String?) {
+        prefs.edit().putString(KEY_TWILIO_VOICE_TOKEN, token).apply()
+    }
+
+    fun getTwilioVoiceToken(): String? {
+        return prefs.getString(KEY_TWILIO_VOICE_TOKEN, null)
     }
 
     fun updateAssignedNumber(phoneNumber: String?) {

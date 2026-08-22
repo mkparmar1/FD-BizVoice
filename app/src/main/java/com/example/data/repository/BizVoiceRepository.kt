@@ -17,6 +17,9 @@ import com.example.data.model.PhoneNumberResponse
 import com.example.data.model.SimpleApiResponse
 import com.example.data.model.TwilioTokenResponse
 import com.example.data.model.User
+import com.example.data.model.toCallRecord
+import com.example.data.model.toContact
+import com.example.data.model.toUser
 import com.example.data.remote.ApiClient
 import com.example.data.remote.MockLaravelBackend
 import kotlinx.coroutines.CoroutineScope
@@ -85,24 +88,28 @@ class BizVoiceRepository(
         try {
             val user: User
             val token: String
+            val twilioToken: String?
 
             if (sessionManager.useMockBackend) {
                 val res = MockLaravelBackend.login(LoginRequest(email, password))
-                user = res.user
+                user = res.user.toUser(res.assignedNumber)
                 token = res.token
+                twilioToken = res.twilioToken
             } else {
                 val response = apiClient.getService().login(LoginRequest(email, password))
                 if (response.isSuccessful && response.body() != null) {
                     val body = response.body()!!
-                    user = body.user
-                    token = body.token
+                    val data = body.data ?: return@withContext Result.failure(Exception(body.message ?: "Invalid credentials"))
+                    user = data.user.toUser(data.assignedNumber)
+                    token = data.token
+                    twilioToken = data.twilioToken
                 } else {
                     val errorMsg = response.errorBody()?.string() ?: "Login failed. Code: ${response.code()}"
                     return@withContext Result.failure(Exception(errorMsg))
                 }
             }
 
-            sessionManager.saveAuth(token, user)
+            sessionManager.saveAuth(token, user, twilioToken)
             registerDevice()
             refreshUserData()
             refreshCalls()
@@ -122,7 +129,8 @@ class BizVoiceRepository(
             } else {
                 val res = apiClient.getService().forgotPassword(ForgotPasswordRequest(email))
                 if (res.isSuccessful && res.body() != null) {
-                    Result.success(res.body()!!)
+                    val body = res.body()!!
+                    Result.success(SimpleApiResponse(success = body.success, message = body.message ?: "Reset link sent"))
                 } else {
                     Result.failure(Exception(res.errorBody()?.string() ?: "Failed to send reset link"))
                 }
@@ -152,11 +160,19 @@ class BizVoiceRepository(
         try {
             val user: User
             if (sessionManager.useMockBackend) {
-                user = MockLaravelBackend.getMe()
+                val me = MockLaravelBackend.getMe()
+                user = me.user.toUser(me.assignedNumber)
+                if (me.twilioToken != null) {
+                    sessionManager.saveTwilioVoiceToken(me.twilioToken)
+                }
             } else {
                 val res = apiClient.getService().getMe()
                 if (res.isSuccessful && res.body() != null) {
-                    user = res.body()!!
+                    val data = res.body()!!.data ?: return@withContext Result.failure(Exception("Failed to parse user profile"))
+                    user = data.user.toUser(data.assignedNumber)
+                    if (data.twilioToken != null) {
+                        sessionManager.saveTwilioVoiceToken(data.twilioToken)
+                    }
                 } else {
                     return@withContext Result.failure(Exception("Failed to fetch user profile"))
                 }
@@ -188,11 +204,13 @@ class BizVoiceRepository(
             )
             val updatedUser: User
             if (sessionManager.useMockBackend) {
-                updatedUser = MockLaravelBackend.updateProfile(req)
+                val me = MockLaravelBackend.updateProfile(req)
+                updatedUser = me.user.toUser(me.assignedNumber)
             } else {
                 val res = apiClient.getService().updateProfile(req)
                 if (res.isSuccessful && res.body() != null) {
-                    updatedUser = res.body()!!
+                    val data = res.body()!!.data ?: return@withContext Result.failure(Exception("Failed to update profile"))
+                    updatedUser = data.user.toUser(data.assignedNumber)
                 } else {
                     return@withContext Result.failure(Exception(res.errorBody()?.string() ?: "Failed to update profile"))
                 }
@@ -209,11 +227,21 @@ class BizVoiceRepository(
         try {
             val phoneRes: PhoneNumberResponse
             if (sessionManager.useMockBackend) {
-                phoneRes = MockLaravelBackend.getPhoneNumber()
+                val dto = MockLaravelBackend.getPhoneNumber()
+                phoneRes = PhoneNumberResponse(
+                    phoneNumber = dto.phoneNumber?.phoneNumber,
+                    status = dto.phoneNumber?.status ?: "unavailable",
+                    callerName = dto.phoneNumber?.friendlyName
+                )
             } else {
                 val res = apiClient.getService().getPhoneNumber()
                 if (res.isSuccessful && res.body() != null) {
-                    phoneRes = res.body()!!
+                    val data = res.body()!!.data
+                    phoneRes = PhoneNumberResponse(
+                        phoneNumber = data?.phoneNumber?.phoneNumber,
+                        status = data?.phoneNumber?.status ?: "unavailable",
+                        callerName = data?.phoneNumber?.friendlyName
+                    )
                 } else {
                     return@withContext Result.failure(Exception("Failed to fetch assigned number"))
                 }
@@ -226,15 +254,16 @@ class BizVoiceRepository(
         }
     }
 
-    suspend fun refreshCalls(): Result<List<CallRecord>> = withContext(Dispatchers.IO) {
+    suspend fun refreshCalls(search: String? = null): Result<List<CallRecord>> = withContext(Dispatchers.IO) {
         try {
             val calls: List<CallRecord>
             if (sessionManager.useMockBackend) {
-                calls = MockLaravelBackend.getCalls()
+                calls = MockLaravelBackend.getCalls(search = search).calls.map { it.toCallRecord() }
             } else {
-                val res = apiClient.getService().getCalls()
+                val res = apiClient.getService().getCalls(search = search)
                 if (res.isSuccessful && res.body() != null) {
-                    calls = res.body()!!
+                    val data = res.body()!!.data
+                    calls = data?.calls?.map { it.toCallRecord() } ?: emptyList()
                 } else {
                     return@withContext Result.failure(Exception("Failed to fetch call records"))
                 }
@@ -254,10 +283,6 @@ class BizVoiceRepository(
 
             if (sessionManager.useMockBackend) {
                 MockLaravelBackend.recordCall(call)
-            } else {
-                try {
-                    apiClient.getService().recordCall(call)
-                } catch (_: Exception) {}
             }
             Result.success(call)
         } catch (e: Exception) {
@@ -271,14 +296,14 @@ class BizVoiceRepository(
 
         if (sessionManager.useMockBackend) {
             try {
-                MockLaravelBackend.getCallById(callId)
+                MockLaravelBackend.getCallById(callId).call.toCallRecord()
             } catch (e: Exception) {
                 null
             }
         } else {
             try {
                 val res = apiClient.getService().getCallById(callId)
-                res.body()
+                res.body()?.data?.call?.toCallRecord()
             } catch (e: Exception) {
                 null
             }
@@ -289,11 +314,12 @@ class BizVoiceRepository(
         try {
             val contacts: List<Contact>
             if (sessionManager.useMockBackend) {
-                contacts = MockLaravelBackend.getContacts()
+                contacts = MockLaravelBackend.getContacts().contacts.map { it.toContact() }
             } else {
                 val res = apiClient.getService().getContacts()
                 if (res.isSuccessful && res.body() != null) {
-                    contacts = res.body()!!
+                    val data = res.body()!!.data
+                    contacts = data?.contacts?.map { it.toContact() } ?: emptyList()
                 } else {
                     return@withContext Result.failure(Exception("Failed to fetch contacts"))
                 }
@@ -312,11 +338,12 @@ class BizVoiceRepository(
             val created: Contact
             val req = ContactCreateUpdateRequest(name, phoneNumber, email, organization)
             if (sessionManager.useMockBackend) {
-                created = MockLaravelBackend.createContact(req)
+                created = MockLaravelBackend.createContact(req).contact.toContact()
             } else {
                 val res = apiClient.getService().createContact(req)
                 if (res.isSuccessful && res.body() != null) {
-                    created = res.body()!!
+                    val data = res.body()!!.data ?: return@withContext Result.failure(Exception("Failed to save contact"))
+                    created = data.contact.toContact()
                 } else {
                     return@withContext Result.failure(Exception(res.errorBody()?.string() ?: "Failed to save contact"))
                 }
@@ -334,11 +361,12 @@ class BizVoiceRepository(
             val updated: Contact
             val req = ContactCreateUpdateRequest(name, phoneNumber, email, organization)
             if (sessionManager.useMockBackend) {
-                updated = MockLaravelBackend.updateContact(id, req)
+                updated = MockLaravelBackend.updateContact(id, req).contact.toContact()
             } else {
                 val res = apiClient.getService().updateContact(id, req)
                 if (res.isSuccessful && res.body() != null) {
-                    updated = res.body()!!
+                    val data = res.body()!!.data ?: return@withContext Result.failure(Exception("Failed to update contact"))
+                    updated = data.contact.toContact()
                 } else {
                     return@withContext Result.failure(Exception(res.errorBody()?.string() ?: "Failed to update contact"))
                 }
@@ -373,15 +401,26 @@ class BizVoiceRepository(
         try {
             val token: TwilioTokenResponse
             if (sessionManager.useMockBackend) {
-                token = MockLaravelBackend.getTwilioToken()
+                val data = MockLaravelBackend.getTwilioToken()
+                token = TwilioTokenResponse(
+                    token = data.token,
+                    identity = data.identity,
+                    expiresIn = data.ttl ?: 3600
+                )
             } else {
                 val res = apiClient.getService().getTwilioToken()
                 if (res.isSuccessful && res.body() != null) {
-                    token = res.body()!!
+                    val data = res.body()!!.data ?: return@withContext Result.failure(Exception("Failed to parse Twilio Voice token"))
+                    token = TwilioTokenResponse(
+                        token = data.token,
+                        identity = data.identity,
+                        expiresIn = data.ttl ?: 3600
+                    )
                 } else {
                     return@withContext Result.failure(Exception("Failed to obtain Twilio Voice token"))
                 }
             }
+            sessionManager.saveTwilioVoiceToken(token.token)
             Result.success(token)
         } catch (e: Exception) {
             Result.failure(e)
@@ -405,11 +444,8 @@ class BizVoiceRepository(
     }
 
     private suspend fun unregisterDevice() {
-        val req = DeviceRegistrationRequest(
-            deviceId = "android_device_" + android.os.Build.MODEL.replace(" ", "_"),
-            platform = "android",
-            pushToken = sessionManager.devicePushToken,
-            appVersion = "1.0.0"
+        val req = com.example.data.model.DeviceUnregisterRequest(
+            deviceId = "android_device_" + android.os.Build.MODEL.replace(" ", "_")
         )
         try {
             if (sessionManager.useMockBackend) {
@@ -418,6 +454,82 @@ class BizVoiceRepository(
                 apiClient.getService().unregisterDevice(req)
             }
         } catch (_: Exception) {}
+    }
+
+    suspend fun syncDeviceContacts(): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val resolver = context.contentResolver
+            val uri = android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+            val projection = arrayOf(
+                android.provider.ContactsContract.CommonDataKinds.Phone._ID,
+                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+                android.provider.ContactsContract.CommonDataKinds.Phone.PHOTO_URI
+            )
+
+            val cursor = resolver.query(
+                uri,
+                projection,
+                null,
+                null,
+                "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
+            )
+
+            val deviceEntities = mutableListOf<ContactEntity>()
+            cursor?.use { c ->
+                val idCol = c.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone._ID)
+                val nameCol = c.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numCol = c.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val photoCol = c.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
+
+                val seenNumbers = mutableSetOf<String>()
+
+                while (c.moveToNext()) {
+                    val rawId = if (idCol != -1) c.getString(idCol) else java.util.UUID.randomUUID().toString()
+                    val rawName = if (nameCol != -1) c.getString(nameCol) ?: "Unknown" else "Unknown"
+                    val rawNum = if (numCol != -1) c.getString(numCol) ?: "" else ""
+                    val photoUri = if (photoCol != -1) c.getString(photoCol) else null
+
+                    val cleanNum = rawNum.trim()
+                    val digitKey = cleanNum.filter { it.isDigit() }
+                    if (cleanNum.isNotBlank() && (digitKey.isEmpty() || seenNumbers.add(digitKey))) {
+                        val contactId = "device_${rawId}_${digitKey.takeLast(6)}"
+                        deviceEntities.add(
+                            ContactEntity(
+                                id = contactId,
+                                name = rawName,
+                                phoneNumber = cleanNum,
+                                email = null,
+                                organization = "Mobile Contact",
+                                avatarUrl = photoUri,
+                                isDeviceContact = true,
+                                createdAt = System.currentTimeMillis()
+                            )
+                        )
+                    }
+                }
+            }
+
+            // Replace old synced device contacts with fresh synced list
+            contactDao.clearDeviceContacts()
+            if (deviceEntities.isNotEmpty()) {
+                contactDao.insertAllContacts(deviceEntities)
+            }
+            Result.success(deviceEntities.size)
+        } catch (e: SecurityException) {
+            Result.failure(Exception("Contacts permission denied. Please grant permission in Settings."))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun clearDeviceContacts(): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            contactDao.clearDeviceContacts()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     suspend fun checkContactByPhone(phone: String): Contact? = withContext(Dispatchers.IO) {

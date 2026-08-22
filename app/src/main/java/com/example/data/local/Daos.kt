@@ -58,4 +58,7 @@ interface ContactDao {
 
     @Query("DELETE FROM contacts WHERE isDeviceContact = 0")
     suspend fun clearAppContacts()
+
+    @Query("DELETE FROM contacts WHERE isDeviceContact = 1")
+    suspend fun clearDeviceContacts()
 }
