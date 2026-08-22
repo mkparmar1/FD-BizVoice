@@ -1,0 +1,6 @@
+{
+  "name": "BizVoice",
+  "description": "Professional VoIP and business calling app connecting to Laravel backend with Twilio Voice integration, dial pad, call management, contacts, and call history.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

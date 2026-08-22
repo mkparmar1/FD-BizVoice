@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Center Phone Receiver Symbol -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40.2,34.5 C38.8,34.5 37.5,35.1 36.5,36.1 L33.2,39.4 C31.5,41.1 30.8,43.6 31.4,45.9 C33.1,52.8 37.8,61.2 46.8,70.2 C55.8,79.2 64.2,83.9 71.1,85.6 C73.4,86.2 75.9,85.5 77.6,83.8 L80.9,80.5 C83.0,78.4 83.0,75.0 80.9,72.9 L75.2,67.2 C73.1,65.1 69.7,65.1 67.6,67.2 L65.5,69.3 C64.9,69.9 64.0,70.1 63.2,69.7 C58.9,67.6 52.4,61.1 50.3,56.8 C49.9,56.0 50.1,55.1 50.7,54.5 L52.8,52.4 C54.9,50.3 54.9,46.9 52.8,44.8 L47.1,39.1 C45.2,37.2 42.7,34.5 40.2,34.5 Z" />
+    
+    <!-- Sound Waves / Voice Signal (Cyan) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M61,31 C67,34.5 71.5,40.5 73,47.5" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#0EA5E9"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M69,23 C79,28 85.5,37 87.5,47.5" />
+</vector>
