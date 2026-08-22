@@ -19,9 +19,15 @@ import com.example.data.model.TwilioTokenResponse
 import com.example.data.model.User
 import com.example.data.remote.ApiClient
 import com.example.data.remote.MockLaravelBackend
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class BizVoiceRepository(
@@ -30,16 +36,21 @@ class BizVoiceRepository(
     private val database: BizVoiceDatabase,
     private val apiClient: ApiClient
 ) {
+    private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val callRecordDao = database.callRecordDao()
     private val contactDao = database.contactDao()
 
     val currentUserFlow = sessionManager.currentUserFlow
     val authStateFlow = sessionManager.authStateFlow
 
-    // Local cached calls flow
-    val allCallsFlow: Flow<List<CallRecord>> = callRecordDao.getAllCalls().map { list ->
-        list.map { it.toCallRecord() }
-    }
+    // Local cached calls hot StateFlow - keeps in-memory state ready across tab switches
+    val allCallsFlow: StateFlow<List<CallRecord>> = callRecordDao.getAllCalls()
+        .map { list -> list.map { it.toCallRecord() } }
+        .stateIn(
+            scope = repositoryScope,
+            started = SharingStarted.Eagerly,
+            initialValue = emptyList()
+        )
 
     fun getCallsForPhoneNumber(phoneNumber: String): Flow<List<CallRecord>> {
         val targetDigits = phoneNumber.filter { it.isDigit() }
@@ -52,9 +63,22 @@ class BizVoiceRepository(
         }
     }
 
-    // Local cached contacts flow
-    val allContactsFlow: Flow<List<Contact>> = contactDao.getAllContacts().map { list ->
-        list.map { it.toContact() }
+    // Local cached contacts hot StateFlow - keeps in-memory state ready across tab switches
+    val allContactsFlow: StateFlow<List<Contact>> = contactDao.getAllContacts()
+        .map { list -> list.map { it.toContact() } }
+        .stateIn(
+            scope = repositoryScope,
+            started = SharingStarted.Eagerly,
+            initialValue = emptyList()
+        )
+
+    init {
+        repositoryScope.launch {
+            if (sessionManager.isLoggedIn()) {
+                refreshCalls()
+                refreshContacts()
+            }
+        }
     }
 
     suspend fun login(email: String, password: String): Result<User> = withContext(Dispatchers.IO) {

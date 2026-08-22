@@ -82,7 +82,7 @@ fun ContactDetailScreen(
     onNavigateToCallDetail: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val allContacts by repository.allContactsFlow.collectAsState(initial = emptyList())
+    val allContacts by repository.allContactsFlow.collectAsState()
     val contact = remember(allContacts, contactId) {
         allContacts.firstOrNull { it.id == contactId }
     }

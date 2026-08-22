@@ -52,6 +52,13 @@ fun MainContainerScreen(
     var currentTab by remember { mutableStateOf(MainTab.DIALER) }
     val activeCall by appContainer.callManager.activeCallFlow.collectAsState()
 
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        appContainer.repository.refreshCalls()
+        appContainer.repository.refreshContacts()
+        appContainer.repository.refreshUserData()
+        appContainer.repository.refreshAssignedPhoneNumber()
+    }
+
     val isIncomingRinging = activeCall.state == CallState.RINGING && activeCall.direction == CallDirection.INCOMING
     val isActiveCallVisible = activeCall.state != CallState.IDLE && activeCall.state != CallState.ENDED && !isIncomingRinging
 

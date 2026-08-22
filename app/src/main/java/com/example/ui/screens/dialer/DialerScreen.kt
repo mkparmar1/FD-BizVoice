@@ -69,7 +69,7 @@ fun DialerScreen(
     onNavigateToContact: (String) -> Unit
 ) {
     val currentUser by repository.currentUserFlow.collectAsState()
-    val allContacts by repository.allContactsFlow.collectAsState(initial = emptyList())
+    val allContacts by repository.allContactsFlow.collectAsState()
     val activeCall by callManager.activeCallFlow.collectAsState()
 
     var enteredNumber by remember { mutableStateOf("") }
@@ -386,7 +386,7 @@ private fun KeypadButton(
 ) {
     Surface(
         modifier = Modifier
-            .size(72.dp)
+            .size(76.dp)
             .clip(CircleShape)
             .combinedClickable(
                 onClick = onClick,
@@ -394,7 +394,8 @@ private fun KeypadButton(
             )
             .testTag("keypad_key_${key.digit}"),
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
         tonalElevation = 1.dp
     ) {
         Column(
@@ -404,17 +405,17 @@ private fun KeypadButton(
         ) {
             Text(
                 text = key.digit,
-                fontSize = 26.sp,
+                fontSize = 28.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
             if (key.letters.isNotEmpty()) {
                 Text(
                     text = key.letters,
-                    fontSize = 9.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

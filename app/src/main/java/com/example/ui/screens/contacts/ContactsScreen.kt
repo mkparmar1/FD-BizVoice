@@ -75,7 +75,7 @@ fun ContactsScreen(
     onNavigateToAddContact: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val allContacts by repository.allContactsFlow.collectAsState(initial = emptyList())
+    val allContacts by repository.allContactsFlow.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf(ContactsFilter.ALL) }

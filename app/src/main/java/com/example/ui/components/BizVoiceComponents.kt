@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -20,6 +21,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallMissed
 import androidx.compose.material.icons.automirrored.filled.CallReceived
+import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.PhoneInTalk
 import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -64,7 +68,7 @@ fun BizTopAppBar(
                 text = title,
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp
+                    letterSpacing = (-0.2).sp
                 )
             )
         },
@@ -83,9 +87,9 @@ fun BizTopAppBar(
         },
         actions = { actions() },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+            containerColor = MaterialTheme.colorScheme.background,
+            titleContentColor = MaterialTheme.colorScheme.onBackground,
+            navigationIconContentColor = MaterialTheme.colorScheme.onBackground
         )
     )
 }
@@ -99,20 +103,21 @@ fun MainTabHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 8.dp),
+            .padding(start = 20.dp, end = 14.dp, top = 18.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.headlineSmall.copy(
+                style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = (-0.5).sp
                 ),
                 color = MaterialTheme.colorScheme.onBackground
             )
             if (subtitle != null) {
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
@@ -142,26 +147,27 @@ fun BizAvatar(
         .joinToString("")
         .ifEmpty { "?" }
 
-    val colors = listOf(
-        Pair(Color(0xFFDDE1FF), Color(0xFF001453)),
-        Pair(Color(0xFFD1E4FF), Color(0xFF001D36)),
-        Pair(Color(0xFFE2E2E6), Color(0xFF1B1B1F)),
-        Pair(Color(0xFFD9E2F9), Color(0xFF131C2B)),
-        Pair(Color(0xFF005AC1), Color.White)
+    val gradients = listOf(
+        Pair(listOf(Color(0xFF3B82F6), Color(0xFF1D4ED8)), Color.White),
+        Pair(listOf(Color(0xFF8B5CF6), Color(0xFF6D28D9)), Color.White),
+        Pair(listOf(Color(0xFF10B981), Color(0xFF047857)), Color.White),
+        Pair(listOf(Color(0xFFF59E0B), Color(0xFFD97706)), Color.White),
+        Pair(listOf(Color(0xFFEC4899), Color(0xFFBE185D)), Color.White),
+        Pair(listOf(Color(0xFF06B6D4), Color(0xFF0E7490)), Color.White)
     )
-    val pair = colors[Math.abs(name.hashCode()).mod(colors.size)]
+    val chosen = gradients[Math.abs(name.hashCode()).mod(gradients.size)]
 
     Box(
         modifier = modifier
             .size(size.dp)
             .clip(CircleShape)
-            .background(pair.first),
+            .background(Brush.linearGradient(chosen.first)),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = initials,
-            color = pair.second,
-            fontWeight = FontWeight.SemiBold,
+            color = chosen.second,
+            fontWeight = FontWeight.Bold,
             fontSize = (size * 0.38).sp,
             textAlign = TextAlign.Center
         )
@@ -179,12 +185,20 @@ fun CallDirectionIcon(
         CallDirection.MISSED -> Pair(Icons.AutoMirrored.Filled.CallMissed, CallRed)
     }
 
-    Icon(
-        imageVector = icon,
-        contentDescription = direction.name,
-        tint = color,
-        modifier = modifier.size(16.dp)
-    )
+    Surface(
+        shape = CircleShape,
+        color = color.copy(alpha = 0.12f),
+        modifier = modifier.size(28.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = direction.name,
+                tint = color,
+                modifier = Modifier.size(15.dp)
+            )
+        }
+    }
 }
 
 @Composable
@@ -204,16 +218,17 @@ fun EmptyStateView(
         verticalArrangement = Arrangement.Center
     ) {
         Surface(
-            modifier = Modifier.size(76.dp),
+            modifier = Modifier.size(80.dp),
             shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceVariant
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(34.dp)
+                    modifier = Modifier.size(36.dp)
                 )
             }
         }
@@ -241,7 +256,7 @@ fun EmptyStateView(
             Spacer(modifier = Modifier.height(20.dp))
             androidx.compose.material3.Button(
                 onClick = onActionClick,
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = Color.White
@@ -260,56 +275,98 @@ fun AssignedNumberBanner(
     onRefreshClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val isAvailable = !phoneNumber.isNullOrBlank()
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(24.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (phoneNumber.isNullOrBlank()) CallRedContainer else MaterialTheme.colorScheme.primaryContainer
+            containerColor = if (isAvailable) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f) else CallRedContainer.copy(alpha = 0.5f)
+        ),
+        border = BorderStroke(
+            1.dp,
+            if (isAvailable) MaterialTheme.colorScheme.outline.copy(alpha = 0.6f) else CallRed.copy(alpha = 0.3f)
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "BUSINESS PHONE LINE",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    ),
-                    color = if (phoneNumber.isNullOrBlank()) CallOnRedContainer else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = phoneNumber ?: "No phone number assigned",
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    ),
-                    color = if (phoneNumber.isNullOrBlank()) CallOnRedContainer else MaterialTheme.colorScheme.onPrimaryContainer,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isAvailable) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else CallRed.copy(alpha = 0.12f),
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.PhoneInTalk,
+                            contentDescription = null,
+                            tint = if (isAvailable) MaterialTheme.colorScheme.primary else CallRed,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column {
+                    Text(
+                        text = "CALLER ID / LINE",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp,
+                            fontSize = 10.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(1.dp))
+                    Text(
+                        text = phoneNumber ?: "No number assigned",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.3.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (phoneNumber.isNullOrBlank()) CallRed.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.6f)
+                shape = RoundedCornerShape(10.dp),
+                color = if (isAvailable) CallGreen.copy(alpha = 0.12f) else CallRed.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, if (isAvailable) CallGreen.copy(alpha = 0.3f) else CallRed.copy(alpha = 0.3f))
             ) {
-                Text(
-                    text = if (phoneNumber.isNullOrBlank()) "Unavailable" else "Active",
-                    color = if (phoneNumber.isNullOrBlank()) CallRed else MaterialTheme.colorScheme.onPrimaryContainer,
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (isAvailable) CallGreen else CallRed)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = if (isAvailable) "Ready" else "Offline",
+                        color = if (isAvailable) CallGreen else CallRed,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    )
+                }
             }
         }
     }
 }
+

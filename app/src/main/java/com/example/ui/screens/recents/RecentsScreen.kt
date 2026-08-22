@@ -80,7 +80,7 @@ fun RecentsScreen(
     onNavigateToCallDetail: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val allCalls by repository.allCallsFlow.collectAsState(initial = emptyList())
+    val allCalls by repository.allCallsFlow.collectAsState()
 
     var selectedFilter by remember { mutableStateOf(RecentsFilter.ALL) }
     var searchQuery by remember { mutableStateOf("") }

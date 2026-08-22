@@ -1,52 +1,73 @@
 package com.example.ui.theme
 
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
-// Clean Minimalism Palette
-val MinimalistPrimary = Color(0xFF005AC1) // Royal / Cobalt Blue
-val MinimalistPrimaryLight = Color(0xFFADC6FF)
-val MinimalistPrimaryDark = Color(0xFF004394)
-val MinimalistPrimaryContainer = Color(0xFFDDE1FF) // Soft Periwinkle container
-val MinimalistOnPrimaryContainer = Color(0xFF001453) // Deep Navy
+// Modern High-End Enterprise VoIP Palette
+val ModernPrimary = Color(0xFF2563EB) // Vibrant Electric Cobalt
+val ModernPrimaryLight = Color(0xFF60A5FA)
+val ModernPrimaryDark = Color(0xFF1D4ED8)
+val ModernPrimaryContainer = Color(0xFFEFF6FF) // Soft Ice Blue
+val ModernOnPrimaryContainer = Color(0xFF1E3A8A) // Deep Royal Navy
 
-val MinimalistSecondary = Color(0xFF565F71)
-val MinimalistSecondaryContainer = Color(0xFFD9E2F9)
-val MinimalistOnSecondaryContainer = Color(0xFF131C2B)
+val ModernSecondary = Color(0xFF64748B) // Slate
+val ModernSecondaryContainer = Color(0xFFF1F5F9)
+val ModernOnSecondaryContainer = Color(0xFF0F172A)
 
-val MinimalistBackgroundLight = Color(0xFFFDFBFF)
-val MinimalistSurfaceLight = Color(0xFFFDFBFF)
-val MinimalistSurfaceVariantLight = Color(0xFFF3F3F7) // Soft neutral grey card
-val MinimalistOnSurfaceLight = Color(0xFF1B1B1F) // Crisp slate
-val MinimalistOnSurfaceVariantLight = Color(0xFF44474E)
-val MinimalistOutlineLight = Color(0xFFE2E2E6)
-val MinimalistOutlineBorder = Color(0xFFBAC3FF)
+val ModernBackgroundLight = Color(0xFFF8FAFC) // Crisp Snow Slate
+val ModernSurfaceLight = Color(0xFFFFFFFF)
+val ModernSurfaceVariantLight = Color(0xFFF1F5F9) // Clean elevated card
+val ModernOnSurfaceLight = Color(0xFF0F172A) // Rich deep charcoal
+val ModernOnSurfaceVariantLight = Color(0xFF475569)
+val ModernOutlineLight = Color(0xFFE2E8F0)
+val ModernOutlineBorder = Color(0xFFBFDBFE)
 
-// Dark Minimalist Theme
-val MinimalistBackgroundDark = Color(0xFF111318)
-val MinimalistSurfaceDark = Color(0xFF1A1C22)
-val MinimalistSurfaceVariantDark = Color(0xFF242730)
-val MinimalistOnSurfaceDark = Color(0xFFE2E2E6)
-val MinimalistOnSurfaceVariantDark = Color(0xFFC4C6D0)
-val MinimalistOutlineDark = Color(0xFF383B44)
+// Modern Dark Theme (Obsidian & Titanium Slate)
+val ModernBackgroundDark = Color(0xFF0B0F19)
+val ModernSurfaceDark = Color(0xFF131B2E)
+val ModernSurfaceVariantDark = Color(0xFF1E293B)
+val ModernOnSurfaceDark = Color(0xFFF8FAFC)
+val ModernOnSurfaceVariantDark = Color(0xFF94A3B8)
+val ModernOutlineDark = Color(0xFF334155)
 
 // Status & Action Colors
-val CallGreen = Color(0xFF00875A) // Clean Forest Emerald
-val CallGreenLight = Color(0xFF22C55E)
-val CallGreenContainer = Color(0xFFDCFCE7)
-val CallOnGreenContainer = Color(0xFF003822)
+val CallGreen = Color(0xFF10B981) // Modern Emerald
+val CallGreenLight = Color(0xFF34D399)
+val CallGreenContainer = Color(0xFFECFDF5)
+val CallOnGreenContainer = Color(0xFF064E3B)
 
-val CallRed = Color(0xFFBA1A1A)
-val CallRedLight = Color(0xFFFFB4AB)
-val CallRedContainer = Color(0xFFFFDAD6)
-val CallOnRedContainer = Color(0xFF410002)
+val CallRed = Color(0xFFEF4444) // Modern Coral Crimson
+val CallRedLight = Color(0xFFF87171)
+val CallRedContainer = Color(0xFFFEF2F2)
+val CallOnRedContainer = Color(0xFF7F1D1D)
 
-val CallHoldAmber = Color(0xFFB45309)
-val CallHoldAmberContainer = Color(0xFFFEF3C7)
+val CallHoldAmber = Color(0xFFF59E0B) // Radiant Amber
+val CallHoldAmberContainer = Color(0xFFFFFBEB)
 
-val InfoContainer = Color(0xFFD1E4FF)
-val OnInfoContainer = Color(0xFF001D36)
+val InfoContainer = Color(0xFFEFF6FF)
+val OnInfoContainer = Color(0xFF1E40AF)
 
-val KeypadButtonBgLight = Color(0xFFF3F3F7)
-val KeypadButtonBgDark = Color(0xFF242730)
+val KeypadButtonBgLight = Color(0xFFF8FAFC)
+val KeypadButtonBorderLight = Color(0xFFE2E8F0)
+val KeypadButtonBgDark = Color(0xFF1E293B)
+val KeypadButtonBorderDark = Color(0xFF334155)
+
+// Gradients
+val PrimaryGradient = Brush.horizontalGradient(
+    colors = listOf(Color(0xFF2563EB), Color(0xFF4F46E5))
+)
+
+val CallGreenGradient = Brush.linearGradient(
+    colors = listOf(Color(0xFF10B981), Color(0xFF059669))
+)
+
+val CallRedGradient = Brush.linearGradient(
+    colors = listOf(Color(0xFFEF4444), Color(0xFFDC2626))
+)
+
+val SurfaceGlassGradientLight = Brush.verticalGradient(
+    colors = listOf(Color(0xFFFFFFFF), Color(0xFFF8FAFC))
+)
+
 
 
