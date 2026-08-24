@@ -1,28 +1,31 @@
 package com.example.telephony
 
+import android.Manifest
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-import android.os.Build
+import android.content.pm.PackageManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.example.data.model.CapabilityTokenDto
 import com.example.data.repository.BizVoiceRepository
+import com.twilio.audioswitch.AudioDevice
+import com.twilio.audioswitch.AudioSwitch
+import com.twilio.voice.Call
+import com.twilio.voice.CallException
+import com.twilio.voice.ConnectOptions
+import com.twilio.voice.Voice
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
 /**
- * Twilio Voice Client-Leg VoIP Manager.
+ * Real Twilio Voice Android SDK VoIP Manager.
  * 
  * Complies with Twilio Voice Architecture:
  * 1. Originate call through Client Leg (client:<identity>) using an Access/Capability Token from backend.
  * 2. Never calls api.twilio.com REST API directly from mobile client.
  * 3. Passes destination number exclusively as custom parameter `To` (e.g. `To: "+918469620312"`).
  * 4. Never passes a `From` parameter (the backend derives caller ID from token identity and executes <Dial>).
- * 5. Caches Capability Token with 1-hour TTL and refreshes before expiration.
+ * 5. Caches Capability Token with safe TTL and refreshes before expiration.
+ * 6. Uses com.twilio.voice.Voice.connect and com.twilio.audioswitch.AudioSwitch for real VoIP audio routing.
  */
 class TwilioVoiceClientManager(
     private val context: Context,
@@ -31,26 +34,27 @@ class TwilioVoiceClientManager(
 ) {
     companion object {
         private const val TAG = "TWILIO_VOICE_CLIENT"
-        private const val TOKEN_TTL_MS = 55 * 60 * 1000L // 55 minutes safe cache TTL
+        private const val TOKEN_TTL_MS = 50 * 60 * 1000L // 50 minutes safe cache TTL
     }
 
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    // Twilio AudioSwitch for managing audio routing (Speakerphone, Earpiece, Bluetooth, Wired)
+    private val audioSwitch: AudioSwitch = AudioSwitch(context.applicationContext, loggingEnabled = true)
 
     // Token Cache
     private var cachedTokenDto: CapabilityTokenDto? = null
     private var tokenFetchedAt: Long = 0L
 
-    // Active Client Call Session
+    // Active Twilio Call & Session
     data class VoiceSession(
         val sessionId: String,
         val clientIdentity: String,
         val toPhoneNumber: String,
-        val connectParams: Map<String, String>,
+        val call: Call? = null,
         val startTime: Long = System.currentTimeMillis()
     )
 
     private var activeSession: VoiceSession? = null
-    private var sessionJob: Job? = null
+    private var activeTwilioCall: Call? = null
 
     // Callbacks for CallManager
     interface CallEventListener {
@@ -63,6 +67,16 @@ class TwilioVoiceClientManager(
     }
 
     private var eventListener: CallEventListener? = null
+
+    init {
+        try {
+            audioSwitch.start { audioDevices, selectedDevice ->
+                Log.d(TAG, "AudioSwitch devices: ${audioDevices.map { it.name }}, selected: ${selectedDevice?.name}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start AudioSwitch: ${e.message}", e)
+        }
+    }
 
     fun setEventListener(listener: CallEventListener?) {
         this.eventListener = listener
@@ -101,7 +115,7 @@ class TwilioVoiceClientManager(
     }
 
     /**
-     * Originates an outbound call using the Client Leg.
+     * Originates an outbound call using the real Twilio Voice SDK.
      * 
      * Passes destination as custom parameter `To`.
      * Does NOT pass `From` parameter (backend derives caller ID).
@@ -109,7 +123,20 @@ class TwilioVoiceClientManager(
     fun connectOutbound(toPhoneNumber: String, onResult: (Result<String>) -> Unit) {
         val cleanDestination = toPhoneNumber.trim()
         if (cleanDestination.length < 3) {
-            onResult(Result.failure(Exception("Invalid destination phone number.")))
+            onResult(Result.failure(IllegalArgumentException("Invalid destination phone number.")))
+            return
+        }
+
+        // Task 5: Verify runtime microphone permission BEFORE calling Voice.connect()
+        val hasMicPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasMicPermission) {
+            val err = "Microphone permission (RECORD_AUDIO) is required to place calls."
+            Log.e(TAG, "connectOutbound aborted: $err")
+            onResult(Result.failure(SecurityException(err)))
             return
         }
 
@@ -118,7 +145,7 @@ class TwilioVoiceClientManager(
                 // Step 1: Ensure valid capability token from backend
                 val tokenResult = getOrFetchAccessToken()
                 if (tokenResult.isFailure) {
-                    val err = tokenResult.exceptionOrNull()?.message ?: "Failed to obtain voice token"
+                    val err = tokenResult.exceptionOrNull()?.message ?: "Failed to obtain voice token from backend"
                     Log.e(TAG, "Cannot place call: $err")
                     onResult(Result.failure(Exception("Voice Authorization Error: $err")))
                     return@launch
@@ -126,127 +153,167 @@ class TwilioVoiceClientManager(
 
                 val tokenData = tokenResult.getOrNull()!!
                 val clientIdentity = tokenData.identity
-
-                // Step 2: Prepare client parameters
-                // Only pass "To" parameter. Never pass "From".
-                val callParams = mapOf(
-                    "To" to cleanDestination
-                )
-
                 val sessionId = "client_call_" + UUID.randomUUID().toString().take(12)
+
+                // Step 2: Build real Twilio ConnectOptions
+                // Send "To" and ONLY "To". Never send "From".
+                val params = mapOf("To" to cleanDestination)
+                val connectOptions = ConnectOptions.Builder(tokenData.token)
+                    .params(params)
+                    .build()
+
+                Log.i(TAG, "Connecting real Twilio Voice call: sessionId=$sessionId, clientIdentity=$clientIdentity, To=$cleanDestination")
+
+                // Step 3: Implement real Call.Listener
+                val callListener = object : Call.Listener {
+                    override fun onConnectFailure(call: Call, error: CallException) {
+                        Log.e(TAG, "Twilio Call.Listener onConnectFailure: code=${error.errorCode}, message=${error.message}, explanation=${error.explanation}")
+                        stopAudioRouting()
+                        activeTwilioCall = null
+                        activeSession = null
+
+                        val explanation = error.explanation?.ifBlank { null } ?: "Unknown Twilio Voice error"
+                        val formattedError = "Call failed (Error ${error.errorCode}: ${error.message ?: explanation})"
+                        eventListener?.onConnectFailure(sessionId, formattedError)
+                    }
+
+                    override fun onRinging(call: Call) {
+                        Log.i(TAG, "Twilio Call.Listener onRinging: callSid=${call.sid}")
+                        eventListener?.onRinging(sessionId)
+                    }
+
+                    override fun onConnected(call: Call) {
+                        Log.i(TAG, "Twilio Call.Listener onConnected: callSid=${call.sid}, from=${call.from}, to=${call.to}")
+                        activeSession = activeSession?.copy(startTime = System.currentTimeMillis())
+                        eventListener?.onConnected(sessionId)
+                    }
+
+                    override fun onReconnecting(call: Call, error: CallException) {
+                        Log.w(TAG, "Twilio Call.Listener onReconnecting: code=${error.errorCode}, message=${error.message}")
+                        eventListener?.onReconnecting(sessionId)
+                    }
+
+                    override fun onReconnected(call: Call) {
+                        Log.i(TAG, "Twilio Call.Listener onReconnected: callSid=${call.sid}")
+                        eventListener?.onConnected(sessionId)
+                    }
+
+                    override fun onDisconnected(call: Call, error: CallException?) {
+                        if (error != null) {
+                            Log.w(TAG, "Twilio Call.Listener onDisconnected with error: code=${error.errorCode}, message=${error.message}")
+                        } else {
+                            Log.i(TAG, "Twilio Call.Listener onDisconnected: callSid=${call.sid}")
+                        }
+                        val duration = activeSession?.let { (System.currentTimeMillis() - it.startTime) / 1000 } ?: 0L
+                        stopAudioRouting()
+                        activeTwilioCall = null
+                        activeSession = null
+                        eventListener?.onDisconnected(sessionId, duration)
+                    }
+                }
+
+                // Step 4: Activate audio and invoke Voice.connect()
+                startAudioRouting()
+                val twilioCall = Voice.connect(context, connectOptions, callListener)
+                activeTwilioCall = twilioCall
                 activeSession = VoiceSession(
                     sessionId = sessionId,
                     clientIdentity = clientIdentity,
                     toPhoneNumber = cleanDestination,
-                    connectParams = callParams
+                    call = twilioCall,
+                    startTime = System.currentTimeMillis()
                 )
 
-                Log.i(TAG, "Originating Client Leg call: sessionId=$sessionId, clientIdentity=$clientIdentity, To=$cleanDestination")
+                // Notify caller that call initiation was accepted by SDK
                 onResult(Result.success(sessionId))
+                eventListener?.onConnecting(sessionId)
 
-                // Step 3: Run call lifecycle through Voice SDK protocol
-                runClientCallLifecycle(sessionId)
             } catch (e: Exception) {
-                Log.e(TAG, "Error initiating client voice call: ${e.message}", e)
+                Log.e(TAG, "Error initiating real Twilio Voice call: ${e.message}", e)
+                stopAudioRouting()
+                activeTwilioCall = null
+                activeSession = null
                 onResult(Result.failure(e))
+                eventListener?.onConnectFailure("client_call_init", e.message ?: "Failed to initialize call")
             }
         }
     }
 
     /**
-     * Executes the Voice Call lifecycle with proper audio routing and state dispatching.
+     * Disconnects the active Twilio Call.
      */
-    private fun runClientCallLifecycle(sessionId: String) {
-        sessionJob?.cancel()
-        sessionJob = scope.launch {
-            try {
-                // Audio configuration: Communication mode for VoIP
-                configureAudioForCall()
-
-                // State: CONNECTING
-                eventListener?.onConnecting(sessionId)
-                delay(800)
-
-                // State: RINGING (Customer's phone is being dialed via <Dial> child leg)
-                eventListener?.onRinging(sessionId)
-                delay(3000)
-
-                // State: CONNECTED (Two-way audio established and bridged)
-                eventListener?.onConnected(sessionId)
-                Log.i(TAG, "Call session $sessionId successfully bridged and connected.")
-            } catch (e: CancellationException) {
-                Log.i(TAG, "Call session $sessionId cancelled/disconnected.")
-            } catch (e: Exception) {
-                Log.e(TAG, "Call session $sessionId failed: ${e.message}", e)
-                eventListener?.onConnectFailure(sessionId, e.message ?: "Connection failed")
-                cleanupAudio()
-            }
-        }
-    }
-
     fun disconnect(sessionId: String? = null) {
-        sessionJob?.cancel()
-        val currentSession = activeSession
+        try {
+            activeTwilioCall?.disconnect()
+            Log.i(TAG, "activeTwilioCall.disconnect() invoked")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to disconnect active Twilio Call: ${e.message}", e)
+        }
+        stopAudioRouting()
+        activeTwilioCall = null
+        val session = activeSession
         activeSession = null
-        cleanupAudio()
-        if (currentSession != null) {
-            val duration = (System.currentTimeMillis() - currentSession.startTime) / 1000
-            eventListener?.onDisconnected(currentSession.sessionId, duration)
+        if (session != null) {
+            val duration = (System.currentTimeMillis() - session.startTime) / 1000
+            eventListener?.onDisconnected(session.sessionId, maxOf(0L, duration))
         }
     }
 
+    /**
+     * Controls real WebRTC audio stream mute via Twilio Call object.
+     */
     fun setMuted(isMuted: Boolean) {
         try {
-            audioManager.isMicrophoneMute = isMuted
-            Log.d(TAG, "Microphone mute set to: $isMuted")
+            activeTwilioCall?.mute(isMuted)
+            Log.d(TAG, "Twilio Call mute set to: $isMuted (callSid=${activeTwilioCall?.sid})")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to toggle microphone mute: ${e.message}")
+            Log.e(TAG, "Failed to toggle Twilio Call mute: ${e.message}")
         }
     }
 
+    /**
+     * Controls speakerphone routing via Twilio AudioSwitch.
+     */
     fun setSpeakerphoneOn(isOn: Boolean) {
         try {
-            audioManager.isSpeakerphoneOn = isOn
-            Log.d(TAG, "Speakerphone set to: $isOn")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to toggle speakerphone: ${e.message}")
-        }
-    }
-
-    private fun configureAudioForCall() {
-        try {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build()
-                    )
-                    .build()
-                audioManager.requestAudioFocus(focusRequest)
+            val available = audioSwitch.availableAudioDevices
+            val targetDevice = if (isOn) {
+                available.firstOrNull { it is AudioDevice.Speakerphone }
             } else {
-                @Suppress("DEPRECATION")
-                audioManager.requestAudioFocus(
-                    null,
-                    AudioManager.STREAM_VOICE_CALL,
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
-                )
+                available.firstOrNull { it is AudioDevice.Earpiece || it is AudioDevice.BluetoothHeadset || it is AudioDevice.WiredHeadset }
+            }
+            if (targetDevice != null) {
+                audioSwitch.selectDevice(targetDevice)
+                Log.d(TAG, "AudioSwitch selected device: ${targetDevice.name}")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to configure audio focus: ${e.message}")
+            Log.e(TAG, "Failed to toggle speakerphone in AudioSwitch: ${e.message}")
         }
     }
 
-    private fun cleanupAudio() {
+    private fun startAudioRouting() {
         try {
-            audioManager.mode = AudioManager.MODE_NORMAL
-            audioManager.isMicrophoneMute = false
-            @Suppress("DEPRECATION")
-            audioManager.abandonAudioFocus(null)
+            audioSwitch.activate()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to reset audio mode: ${e.message}")
+            Log.e(TAG, "Failed to activate AudioSwitch: ${e.message}")
+        }
+    }
+
+    private fun stopAudioRouting() {
+        try {
+            audioSwitch.deactivate()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to deactivate AudioSwitch: ${e.message}")
+        }
+    }
+
+    fun cleanup() {
+        try {
+            activeTwilioCall?.disconnect()
+            activeTwilioCall = null
+            audioSwitch.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "Cleanup exception: ${e.message}")
         }
     }
 }

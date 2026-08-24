@@ -4,8 +4,14 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material3.Surface
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Dialpad
@@ -113,36 +119,64 @@ fun MainContainerScreen(
                 }
             }
         ) { innerPadding ->
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                when (currentTab) {
-                    MainTab.DIALER -> DialerScreen(
-                        repository = appContainer.repository,
-                        callManager = appContainer.callManager,
-                        onNavigateToContact = onNavigateToContactDetail
-                    )
-                    MainTab.RECENTS -> RecentsScreen(
-                        repository = appContainer.repository,
-                        callManager = appContainer.callManager,
-                        onNavigateToCallDetail = onNavigateToCallDetail
-                    )
-                    MainTab.CONTACTS -> ContactsScreen(
-                        repository = appContainer.repository,
-                        callManager = appContainer.callManager,
-                        onNavigateToContactDetail = onNavigateToContactDetail,
-                        onNavigateToAddContact = onNavigateToAddContact
-                    )
-                    MainTab.SETTINGS -> SettingsScreen(
-                        repository = appContainer.repository,
-                        onNavigateToProfile = onNavigateToProfile,
-                        onNavigateToPermissions = onNavigateToPermissions,
-                        onNavigateToBackendConfig = onNavigateToBackendConfig,
-                        onNavigateToAbout = onNavigateToAbout,
-                        onLogoutComplete = onLogoutComplete
-                    )
+                if (appContainer.sessionManager.useMockBackend) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("mock_backend_active_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "⚠️ MOCK BACKEND ACTIVE (Simulated Mode). Real Twilio calls are bypassed.",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f)
+                ) {
+                    when (currentTab) {
+                        MainTab.DIALER -> DialerScreen(
+                            repository = appContainer.repository,
+                            callManager = appContainer.callManager,
+                            onNavigateToContact = onNavigateToContactDetail
+                        )
+                        MainTab.RECENTS -> RecentsScreen(
+                            repository = appContainer.repository,
+                            callManager = appContainer.callManager,
+                            onNavigateToCallDetail = onNavigateToCallDetail
+                        )
+                        MainTab.CONTACTS -> ContactsScreen(
+                            repository = appContainer.repository,
+                            callManager = appContainer.callManager,
+                            onNavigateToContactDetail = onNavigateToContactDetail,
+                            onNavigateToAddContact = onNavigateToAddContact
+                        )
+                        MainTab.SETTINGS -> SettingsScreen(
+                            repository = appContainer.repository,
+                            onNavigateToProfile = onNavigateToProfile,
+                            onNavigateToPermissions = onNavigateToPermissions,
+                            onNavigateToBackendConfig = onNavigateToBackendConfig,
+                            onNavigateToAbout = onNavigateToAbout,
+                            onLogoutComplete = onLogoutComplete
+                        )
+                    }
                 }
             }
         }

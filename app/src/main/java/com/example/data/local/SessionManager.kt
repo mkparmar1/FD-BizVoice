@@ -221,8 +221,14 @@ class SessionManager(context: Context) {
         set(value) = prefs.edit().putString(KEY_BASE_API_URL, value).apply()
 
     var useMockBackend: Boolean
-        get() = prefs.getBoolean(KEY_USE_MOCK_BACKEND, false) // Default to live backend
-        set(value) = prefs.edit().putBoolean(KEY_USE_MOCK_BACKEND, value).apply()
+        get() = if (com.example.BuildConfig.DEBUG) prefs.getBoolean(KEY_USE_MOCK_BACKEND, false) else false
+        set(value) {
+            if (com.example.BuildConfig.DEBUG) {
+                prefs.edit().putBoolean(KEY_USE_MOCK_BACKEND, value).apply()
+            } else {
+                prefs.edit().putBoolean(KEY_USE_MOCK_BACKEND, false).apply()
+            }
+        }
 
     var defaultSpeaker: Boolean
         get() = prefs.getBoolean(KEY_DEFAULT_SPEAKER, false)
