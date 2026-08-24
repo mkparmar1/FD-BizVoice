@@ -3,8 +3,11 @@ package com.example.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.data.model.User
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class SessionManager(context: Context) {
@@ -12,6 +15,8 @@ class SessionManager(context: Context) {
 
     companion object {
         private const val KEY_AUTH_TOKEN = "auth_token"
+        private const val KEY_DEVICE_AUTH_KEY = "device_auth_key"
+        private const val KEY_SECRET_KEY = "secret_key"
         private const val KEY_USER_ID = "user_id"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_USER_EMAIL = "user_email"
@@ -19,6 +24,7 @@ class SessionManager(context: Context) {
         private const val KEY_USER_STATUS = "user_status"
         private const val KEY_USER_ROLE = "user_role"
         private const val KEY_USER_COMPANY = "user_company"
+        private const val KEY_USER_CREDITS = "user_credits"
         private const val KEY_BASE_API_URL = "base_api_url"
         private const val KEY_USE_MOCK_BACKEND = "use_mock_backend"
         private const val KEY_DEFAULT_SPEAKER = "default_speaker"
@@ -27,16 +33,21 @@ class SessionManager(context: Context) {
         private const val KEY_DEVICE_TOKEN = "device_push_token"
         private const val KEY_THEME_MODE = "theme_mode" // "SYSTEM", "LIGHT", "DARK"
         private const val KEY_TWILIO_VOICE_TOKEN = "twilio_voice_token"
+        private const val KEY_SAVED_LOGIN_EMAIL = "saved_login_email"
+        private const val KEY_SAVED_LOGIN_PASSWORD = "saved_login_password"
 
         const val THEME_SYSTEM = "SYSTEM"
         const val THEME_LIGHT = "LIGHT"
         const val THEME_DARK = "DARK"
 
-        const val DEFAULT_API_URL = "http://localhost/api/v1"
+        const val DEFAULT_API_URL = "https://api.growfone.com/api/v1.0"
     }
 
     private val _authStateFlow = MutableStateFlow(isLoggedIn())
     val authStateFlow: StateFlow<Boolean> = _authStateFlow.asStateFlow()
+
+    private val _unauthorizedEventFlow = MutableSharedFlow<String?>(extraBufferCapacity = 1)
+    val unauthorizedEventFlow: SharedFlow<String?> = _unauthorizedEventFlow.asSharedFlow()
 
     private val _currentUserFlow = MutableStateFlow(getCurrentUser())
     val currentUserFlow: StateFlow<User?> = _currentUserFlow.asStateFlow()
@@ -44,16 +55,31 @@ class SessionManager(context: Context) {
     private val _themeModeFlow = MutableStateFlow(prefs.getString(KEY_THEME_MODE, THEME_SYSTEM) ?: THEME_SYSTEM)
     val themeModeFlow: StateFlow<String> = _themeModeFlow.asStateFlow()
 
-    fun saveAuth(token: String, user: User, twilioToken: String? = null) {
+    fun saveAuth(
+        token: String,
+        user: User,
+        twilioToken: String? = null,
+        deviceAuthKey: String? = null
+    ) {
+        val cleanPhone = user.assignedPhoneNumber?.trim()?.ifBlank { null } ?: "+12183061691"
+        val sanitizedUser = user.copy(assignedPhoneNumber = cleanPhone)
+
         val editor = prefs.edit()
             .putString(KEY_AUTH_TOKEN, token)
-            .putString(KEY_USER_ID, user.id)
-            .putString(KEY_USER_NAME, user.name)
-            .putString(KEY_USER_EMAIL, user.email)
-            .putString(KEY_ASSIGNED_PHONE, user.assignedPhoneNumber)
-            .putString(KEY_USER_STATUS, user.status)
-            .putString(KEY_USER_ROLE, user.role)
-            .putString(KEY_USER_COMPANY, user.company)
+            .putString(KEY_USER_ID, sanitizedUser.id)
+            .putString(KEY_USER_NAME, sanitizedUser.name)
+            .putString(KEY_USER_EMAIL, sanitizedUser.email)
+            .putString(KEY_ASSIGNED_PHONE, cleanPhone)
+            .putString(KEY_USER_STATUS, sanitizedUser.status)
+            .putString(KEY_USER_ROLE, sanitizedUser.role)
+            .putString(KEY_USER_COMPANY, sanitizedUser.company)
+            .putInt(KEY_USER_CREDITS, sanitizedUser.credits)
+
+        if (deviceAuthKey != null) {
+            editor.putString(KEY_DEVICE_AUTH_KEY, deviceAuthKey)
+        } else if (user.authKey != null) {
+            editor.putString(KEY_DEVICE_AUTH_KEY, user.authKey)
+        }
 
         if (twilioToken != null) {
             editor.putString(KEY_TWILIO_VOICE_TOKEN, twilioToken)
@@ -61,7 +87,7 @@ class SessionManager(context: Context) {
         editor.apply()
 
         _authStateFlow.value = true
-        _currentUserFlow.value = user
+        _currentUserFlow.value = sanitizedUser
     }
 
     fun saveTwilioVoiceToken(token: String?) {
@@ -77,6 +103,15 @@ class SessionManager(context: Context) {
         val current = getCurrentUser()
         if (current != null) {
             val updated = current.copy(assignedPhoneNumber = phoneNumber)
+            _currentUserFlow.value = updated
+        }
+    }
+
+    fun updateCredits(credits: Int) {
+        prefs.edit().putInt(KEY_USER_CREDITS, credits).apply()
+        val current = getCurrentUser()
+        if (current != null) {
+            val updated = current.copy(credits = credits)
             _currentUserFlow.value = updated
         }
     }
@@ -101,12 +136,32 @@ class SessionManager(context: Context) {
             .putString(KEY_USER_STATUS, user.status)
             .putString(KEY_USER_ROLE, user.role)
             .putString(KEY_USER_COMPANY, user.company)
+            .putInt(KEY_USER_CREDITS, user.credits)
             .apply()
         _currentUserFlow.value = user
     }
 
     fun getAuthToken(): String? {
         return prefs.getString(KEY_AUTH_TOKEN, null)
+    }
+
+    fun getDeviceAuthKey(): String {
+        return prefs.getString(KEY_DEVICE_AUTH_KEY, null)
+            ?: getCurrentUser()?.authKey
+            ?: getAuthToken()
+            ?: "device_auth_key_default"
+    }
+
+    fun setDeviceAuthKey(key: String) {
+        prefs.edit().putString(KEY_DEVICE_AUTH_KEY, key).apply()
+    }
+
+    fun getSecretKey(): String {
+        return prefs.getString(KEY_SECRET_KEY, "growfone_secret_key_default") ?: "growfone_secret_key_default"
+    }
+
+    fun setSecretKey(key: String) {
+        prefs.edit().putString(KEY_SECRET_KEY, key).apply()
     }
 
     fun isLoggedIn(): Boolean {
@@ -117,10 +172,12 @@ class SessionManager(context: Context) {
         val id = prefs.getString(KEY_USER_ID, null) ?: return null
         val name = prefs.getString(KEY_USER_NAME, "User") ?: "User"
         val email = prefs.getString(KEY_USER_EMAIL, "") ?: ""
-        val phone = prefs.getString(KEY_ASSIGNED_PHONE, null)
+        val phone = prefs.getString(KEY_ASSIGNED_PHONE, null)?.ifBlank { null } ?: "+12183061691"
         val status = prefs.getString(KEY_USER_STATUS, "active") ?: "active"
-        val role = prefs.getString(KEY_USER_ROLE, "Agent") ?: "Agent"
+        val role = prefs.getString(KEY_USER_ROLE, "user") ?: "user"
         val company = prefs.getString(KEY_USER_COMPANY, "BizVoice Global Corp") ?: "BizVoice Global Corp"
+        val credits = prefs.getInt(KEY_USER_CREDITS, 250)
+        val authKey = prefs.getString(KEY_DEVICE_AUTH_KEY, null)
 
         return User(
             id = id,
@@ -129,13 +186,16 @@ class SessionManager(context: Context) {
             assignedPhoneNumber = phone,
             status = status,
             role = role,
-            company = company
+            company = company,
+            credits = credits,
+            authKey = authKey
         )
     }
 
     fun clearSession() {
         prefs.edit()
             .remove(KEY_AUTH_TOKEN)
+            .remove(KEY_DEVICE_AUTH_KEY)
             .remove(KEY_USER_ID)
             .remove(KEY_USER_NAME)
             .remove(KEY_USER_EMAIL)
@@ -143,10 +203,16 @@ class SessionManager(context: Context) {
             .remove(KEY_USER_STATUS)
             .remove(KEY_USER_ROLE)
             .remove(KEY_USER_COMPANY)
+            .remove(KEY_USER_CREDITS)
             .apply()
 
         _authStateFlow.value = false
         _currentUserFlow.value = null
+    }
+
+    fun notifyUnauthorized(reason: String = "Session expired. Please log in again.") {
+        clearSession()
+        _unauthorizedEventFlow.tryEmit(reason)
     }
 
     // Settings
@@ -155,7 +221,7 @@ class SessionManager(context: Context) {
         set(value) = prefs.edit().putString(KEY_BASE_API_URL, value).apply()
 
     var useMockBackend: Boolean
-        get() = prefs.getBoolean(KEY_USE_MOCK_BACKEND, true) // True by default for safe out-of-the-box demoing without breaking
+        get() = prefs.getBoolean(KEY_USE_MOCK_BACKEND, false) // Default to live backend
         set(value) = prefs.edit().putBoolean(KEY_USE_MOCK_BACKEND, value).apply()
 
     var defaultSpeaker: Boolean
@@ -171,7 +237,7 @@ class SessionManager(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_NOTIFICATIONS_ENABLED, value).apply()
 
     var devicePushToken: String
-        get() = prefs.getString(KEY_DEVICE_TOKEN, "fcm_token_bizvoice_" + System.currentTimeMillis()) ?: "fcm_token_sample"
+        get() = prefs.getString(KEY_DEVICE_TOKEN, "fcm_token_growfone_" + System.currentTimeMillis()) ?: "fcm_token_sample"
         set(value) = prefs.edit().putString(KEY_DEVICE_TOKEN, value).apply()
 
     var themeMode: String
@@ -180,4 +246,19 @@ class SessionManager(context: Context) {
             prefs.edit().putString(KEY_THEME_MODE, value).apply()
             _themeModeFlow.value = value
         }
+
+    fun saveLastLoginCredentials(email: String, pass: String) {
+        prefs.edit()
+            .putString(KEY_SAVED_LOGIN_EMAIL, email)
+            .putString(KEY_SAVED_LOGIN_PASSWORD, pass)
+            .apply()
+    }
+
+    fun getSavedLoginEmail(): String {
+        return prefs.getString(KEY_SAVED_LOGIN_EMAIL, "") ?: ""
+    }
+
+    fun getSavedLoginPassword(): String {
+        return prefs.getString(KEY_SAVED_LOGIN_PASSWORD, "") ?: ""
+    }
 }

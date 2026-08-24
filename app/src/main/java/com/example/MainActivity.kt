@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -57,6 +58,18 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun BizVoiceNavigation(appContainer: BizVoiceAppContainer) {
     val navController = rememberNavController()
+
+    // Automatically navigate to Login when 401 Unauthorized occurs
+    LaunchedEffect(Unit) {
+        appContainer.sessionManager.unauthorizedEventFlow.collect {
+            try {
+                appContainer.callManager.endCall()
+            } catch (_: Exception) {}
+            navController.navigate(Screen.Login.route) {
+                popUpTo(0) { inclusive = true }
+            }
+        }
+    }
 
     NavHost(
         navController = navController,

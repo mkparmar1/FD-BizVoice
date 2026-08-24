@@ -1,5 +1,9 @@
 package com.example.ui.screens.dialer
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -44,12 +48,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.data.model.Contact
 import com.example.data.repository.BizVoiceRepository
 import com.example.telephony.CallManager
@@ -68,12 +74,54 @@ fun DialerScreen(
     callManager: CallManager,
     onNavigateToContact: (String) -> Unit
 ) {
+    val context = LocalContext.current
     val currentUser by repository.currentUserFlow.collectAsState()
     val allContacts by repository.allContactsFlow.collectAsState()
     val activeCall by callManager.activeCallFlow.collectAsState()
 
     var enteredNumber by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    var pendingNumberToCall by remember { mutableStateOf<String?>(null) }
+    var pendingContactNameToCall by remember { mutableStateOf<String?>(null) }
+
+    fun executeCall(numberToCall: String, contactName: String?) {
+        errorMessage = null
+        enteredNumber = ""
+        val result = callManager.startOutgoingCall(numberToCall, contactName)
+        if (result.isFailure) {
+            errorMessage = result.exceptionOrNull()?.message
+        }
+    }
+
+    val recordAudioLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            pendingNumberToCall?.let { num ->
+                executeCall(num, pendingContactNameToCall)
+            }
+        } else {
+            errorMessage = "Microphone permission is required for voice calls."
+        }
+        pendingNumberToCall = null
+        pendingContactNameToCall = null
+    }
+
+    fun initiateCallWithPermission(numberToCall: String, contactName: String?) {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (hasPermission) {
+            executeCall(numberToCall, contactName)
+        } else {
+            pendingNumberToCall = numberToCall
+            pendingContactNameToCall = contactName
+            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     // Automatically clear dial pad when a call connects, ends, or returns to idle
     LaunchedEffect(activeCall.state) {
@@ -170,9 +218,7 @@ fun DialerScreen(
                 items(matchingContacts) { contact ->
                     Surface(
                         onClick = {
-                            enteredNumber = contact.phoneNumber
-                            errorMessage = null
-                            callManager.startOutgoingCall(contact.phoneNumber, contact.name)
+                            initiateCallWithPermission(contact.phoneNumber, contact.name)
                         },
                         shape = RoundedCornerShape(20.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -324,14 +370,9 @@ fun DialerScreen(
                     } else if (enteredNumber.isBlank()) {
                         errorMessage = "Please enter a phone number to call."
                     } else {
-                        errorMessage = null
                         val numberToCall = enteredNumber
                         val matched = allContacts.firstOrNull { it.phoneNumber == numberToCall }
-                        enteredNumber = ""
-                        val result = callManager.startOutgoingCall(numberToCall, matched?.name)
-                        if (result.isFailure) {
-                            errorMessage = result.exceptionOrNull()?.message
-                        }
+                        initiateCallWithPermission(numberToCall, matched?.name)
                     }
                 },
                 shape = CircleShape,

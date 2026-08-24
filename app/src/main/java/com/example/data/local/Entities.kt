@@ -78,6 +78,9 @@ data class ContactEntity(
     val organization: String?,
     val avatarUrl: String?,
     val isDeviceContact: Boolean,
+    val isDnd: Boolean = false,
+    val isBlacklisted: Boolean = false,
+    val notes: String? = null,
     val createdAt: Long
 ) {
     fun toContact(): Contact {
@@ -89,6 +92,9 @@ data class ContactEntity(
             organization = organization,
             avatarUrl = avatarUrl,
             isDeviceContact = isDeviceContact,
+            isDnd = isDnd,
+            isBlacklisted = isBlacklisted,
+            notes = notes,
             createdAt = createdAt
         )
     }
@@ -103,6 +109,9 @@ data class ContactEntity(
                 organization = contact.organization,
                 avatarUrl = contact.avatarUrl,
                 isDeviceContact = contact.isDeviceContact,
+                isDnd = contact.isDnd,
+                isBlacklisted = contact.isBlacklisted,
+                notes = contact.notes,
                 createdAt = contact.createdAt
             )
         }

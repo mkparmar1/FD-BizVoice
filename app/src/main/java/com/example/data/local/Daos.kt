@@ -24,7 +24,13 @@ interface CallRecordDao {
     suspend fun insertCall(call: CallRecordEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(call: CallRecordEntity) = insertCall(call)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAllCalls(calls: List<CallRecordEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(calls: List<CallRecordEntity>) = insertAllCalls(calls)
 
     @Query("DELETE FROM call_records WHERE id = :id")
     suspend fun deleteCall(id: String)
@@ -51,10 +57,19 @@ interface ContactDao {
     suspend fun insertContact(contact: ContactEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(contact: ContactEntity) = insertContact(contact)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAllContacts(contacts: List<ContactEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(contacts: List<ContactEntity>) = insertAllContacts(contacts)
 
     @Query("DELETE FROM contacts WHERE id = :id")
     suspend fun deleteContact(id: String)
+
+    @Query("DELETE FROM contacts WHERE id = :id")
+    suspend fun deleteById(id: String) = deleteContact(id)
 
     @Query("DELETE FROM contacts WHERE isDeviceContact = 0")
     suspend fun clearAppContacts()

@@ -239,8 +239,8 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // SECTION: System & Backend
-        SettingsSectionHeader("SYSTEM & NETWORK")
+        // SECTION: System & Permissions
+        SettingsSectionHeader("PERMISSIONS & DEVICE")
         Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -249,31 +249,11 @@ fun SettingsScreen(
         ) {
             Column {
                 SettingsNavRow(
-                    icon = Icons.Default.Dns,
-                    title = "Backend Server & Sandbox",
-                    subtitle = if (sessionManager.useMockBackend) "Sandbox Simulation Mode" else sessionManager.baseApiUrl,
-                    onClick = onNavigateToBackendConfig,
-                    testTag = "settings_server_row"
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                SettingsNavRow(
                     icon = Icons.Default.Security,
                     title = "App Permissions",
                     subtitle = "Microphone, Contacts, Notifications",
                     onClick = onNavigateToPermissions,
                     testTag = "settings_permissions_row"
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                SettingsNavRow(
-                    icon = Icons.Default.Info,
-                    title = "About BizVoice",
-                    subtitle = "Version 1.0.0 (Build 2026)",
-                    onClick = onNavigateToAbout,
-                    testTag = "settings_about_row"
                 )
             }
         }

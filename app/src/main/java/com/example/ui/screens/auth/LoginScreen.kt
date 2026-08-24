@@ -33,6 +33,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -74,9 +75,14 @@ fun LoginScreen(
 ) {
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+    val sessionManager = repository.sessionManager
 
-    var email by remember { mutableStateOf("alex.mitchell@bizvoice.io") }
-    var password by remember { mutableStateOf("businesspass123") }
+    val savedEmail = remember { sessionManager.getSavedLoginEmail().ifBlank { "team@demo.test" } }
+    val savedPassword = remember { sessionManager.getSavedLoginPassword().ifBlank { "password123" } }
+
+    var email by remember { mutableStateOf(savedEmail) }
+    var password by remember { mutableStateOf(savedPassword) }
+    var rememberCredentials by remember { mutableStateOf(true) }
     var passwordVisible by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -93,6 +99,9 @@ fun LoginScreen(
                 val result = repository.login(trimmedEmail, trimmedPass)
                 isLoading = false
                 if (result.isSuccess) {
+                    if (rememberCredentials) {
+                        sessionManager.saveLastLoginCredentials(trimmedEmail, trimmedPass)
+                    }
                     onLoginSuccess()
                 } else {
                     errorMessage = result.exceptionOrNull()?.message ?: "Login failed. Please check your credentials."
@@ -152,68 +161,6 @@ fun LoginScreen(
             )
 
             Spacer(modifier = Modifier.height(24.dp))
-
-            // Quick Demo Profiles preset chips
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "QUICK DEMO ACCOUNTS",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp),
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = email == "alex.mitchell@bizvoice.io",
-                            onClick = {
-                                email = "alex.mitchell@bizvoice.io"
-                                password = "businesspass123"
-                                errorMessage = null
-                            },
-                            label = { Text("Alex M. (Admin)", fontSize = 12.sp) },
-                            leadingIcon = {
-                                Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(16.dp))
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            ),
-                            modifier = Modifier.testTag("demo_chip_alex")
-                        )
-
-                        FilterChip(
-                            selected = email == "sarah.j@techflow.com",
-                            onClick = {
-                                email = "sarah.j@techflow.com"
-                                password = "businesspass123"
-                                errorMessage = null
-                            },
-                            label = { Text("Sarah J. (Agent)", fontSize = 12.sp) },
-                            leadingIcon = {
-                                Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(16.dp))
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            ),
-                            modifier = Modifier.testTag("demo_chip_sarah")
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
 
             // Error Banner
             AnimatedVisibility(visible = errorMessage != null) {
@@ -301,15 +248,21 @@ fun LoginScreen(
             )
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(
-                    onClick = onNavigateToForgotPassword,
-                    modifier = Modifier.testTag("forgot_password_button")
-                ) {
-                    Text("Forgot Password?")
-                }
+                Checkbox(
+                    checked = rememberCredentials,
+                    onCheckedChange = { rememberCredentials = it },
+                    modifier = Modifier.testTag("remember_credentials_toggle")
+                )
+                Text(
+                    text = "Remember me",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -344,44 +297,6 @@ fun LoginScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-
-            // Backend Config / Live Server Trigger
-            Surface(
-                onClick = onNavigateToBackendConfig,
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("server_settings_trigger")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Dns,
-                        contentDescription = "Server Settings",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (repository.sessionManager.useMockBackend) "Connected: Sandbox Demo Mode" else "Connected: Live Laravel Server",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = if (repository.sessionManager.useMockBackend) "Tap to switch to custom Laravel API endpoint" else repository.sessionManager.baseApiUrl,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            maxLines = 1
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }
