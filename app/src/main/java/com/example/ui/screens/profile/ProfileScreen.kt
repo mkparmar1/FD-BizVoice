@@ -199,9 +199,7 @@ fun ProfileScreen(
                     shadowElevation = 4.dp
                 ) {
                     Box(
-                        modifier = Modifier
-                            .size(92.dp)
-                            .clickable { showEditDialog = true },
+                        modifier = Modifier.size(92.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         BizAvatar(name = user.name, size = 92)
@@ -369,7 +367,7 @@ fun ProfileScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Account Information & Management Card
+                // Account Information Card
                 Card(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -377,28 +375,13 @@ fun ProfileScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "ACCOUNT DETAILS",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                        Text(
+                            text = "ACCOUNT DETAILS",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
+                            color = MaterialTheme.colorScheme.primary
+                        )
 
-                            TextButton(
-                                onClick = { showEditDialog = true },
-                                modifier = Modifier.testTag("manage_profile_text_button")
-                            ) {
-                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Edit Profile", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         ProfileInfoRow(
                             icon = Icons.Default.Person,
@@ -442,23 +425,7 @@ fun ProfileScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Action Buttons: Edit Profile & Log Out
-                Button(
-                    onClick = { showEditDialog = true },
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("edit_profile_main_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Edit Profile Details", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
+                // Action Button: Log Out
                 OutlinedButton(
                     onClick = { showLogoutDialog = true },
                     shape = RoundedCornerShape(16.dp),

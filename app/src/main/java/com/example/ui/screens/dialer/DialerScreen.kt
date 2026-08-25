@@ -7,13 +7,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.PhoneCallback
 import androidx.compose.material.icons.filled.PhoneDisabled
@@ -34,7 +35,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -57,14 +57,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.data.model.Contact
+import com.example.data.model.DialingCountry
 import com.example.data.repository.BizVoiceRepository
 import com.example.telephony.CallManager
 import com.example.telephony.CallState
+import com.example.telephony.PhoneNumberFormatter
 import com.example.ui.components.AssignedNumberBanner
 import com.example.ui.components.BizAvatar
 import com.example.ui.components.MainTabHeader
 import com.example.ui.theme.CallGreen
-import com.example.ui.theme.CallRed
 
 data class KeypadKey(val digit: String, val letters: String)
 
@@ -79,11 +80,36 @@ fun DialerScreen(
     val allContacts by repository.allContactsFlow.collectAsState()
     val activeCall by callManager.activeCallFlow.collectAsState()
 
+    val dialingCountries by repository.dialingCountriesFlow.collectAsState()
+    val selectedCountry by repository.selectedDialerCountryFlow.collectAsState()
+
     var enteredNumber by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showCountryPicker by remember { mutableStateOf(false) }
 
     var pendingNumberToCall by remember { mutableStateOf<String?>(null) }
     var pendingContactNameToCall by remember { mutableStateOf<String?>(null) }
+
+    // Task 4: The "+" Rule
+    // If typed input starts with '+', auto-detect country and update picker
+    LaunchedEffect(enteredNumber) {
+        val cleaned = PhoneNumberFormatter.cleanRawInput(enteredNumber)
+        if (cleaned.startsWith("+") && cleaned.length >= 2) {
+            val detected = PhoneNumberFormatter.detectCountryFromE164(cleaned, context, dialingCountries)
+            if (detected != null && detected.isoCode != selectedCountry.isoCode) {
+                repository.setSelectedDialerCountry(detected)
+            }
+        }
+    }
+
+    // Task 6: Validate assembled number before dialing
+    val validationResult = remember(enteredNumber, selectedCountry) {
+        PhoneNumberFormatter.validateNumber(enteredNumber, selectedCountry, context)
+    }
+
+    val assignedPhone = currentUser?.assignedPhoneNumber
+    val isNumberAvailable = !assignedPhone.isNullOrBlank()
+    val isCallAllowed = isNumberAvailable && validationResult.isValid && selectedCountry.enabled
 
     fun executeCall(numberToCall: String, contactName: String?) {
         errorMessage = null
@@ -137,13 +163,16 @@ fun DialerScreen(
         }
     }
 
-    // Quick contact match based on entered number
-    val matchingContacts = remember(enteredNumber, allContacts) {
+    // Quick contact match based on entered digits or assembled number
+    val matchingContacts = remember(enteredNumber, allContacts, validationResult.assembledE164) {
         if (enteredNumber.length >= 2) {
             val cleanQuery = enteredNumber.filter { it.isDigit() }
+            val assembledDigits = validationResult.assembledE164.filter { it.isDigit() }
             allContacts.filter { contact ->
                 val cleanPhone = contact.phoneNumber.filter { it.isDigit() }
-                cleanPhone.contains(cleanQuery) || contact.name.contains(enteredNumber, ignoreCase = true)
+                cleanPhone.contains(cleanQuery) ||
+                (assembledDigits.isNotEmpty() && cleanPhone.contains(assembledDigits)) ||
+                contact.name.contains(enteredNumber, ignoreCase = true)
             }.take(4)
         } else {
             emptyList()
@@ -164,9 +193,6 @@ fun DialerScreen(
         KeypadKey("0", "+"),
         KeypadKey("#", "")
     )
-
-    val assignedPhone = currentUser?.assignedPhoneNumber
-    val isNumberAvailable = !assignedPhone.isNullOrBlank()
 
     Column(
         modifier = Modifier
@@ -241,35 +267,80 @@ fun DialerScreen(
                 }
             }
         } else {
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
         }
 
-        Spacer(modifier = Modifier.weight(0.5f))
+        Spacer(modifier = Modifier.weight(0.4f))
 
-        // Entered Number Display & Backspace
-        Box(
+        // Number Input Row with Country Selector (Left), Number Display (Center), and Backspace (Right)
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .height(64.dp),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 16.dp)
+                .height(60.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = if (enteredNumber.isEmpty()) "Enter Number" else enteredNumber,
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
+            // Country Selector Button (Task 3 & 4)
+            Surface(
+                onClick = { showCountryPicker = true },
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
                 ),
-                color = if (enteredNumber.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 48.dp)
-                    .testTag("dialer_number_display")
-            )
+                    .testTag("country_picker_button")
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = selectedCountry.flagEmoji,
+                        fontSize = 20.sp
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = selectedCountry.callingCode,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ArrowDropDown,
+                        contentDescription = "Select country",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
 
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Number Display
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (enteredNumber.isEmpty()) "Enter Number" else enteredNumber,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    ),
+                    color = if (enteredNumber.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("dialer_number_display")
+                )
+            }
+
+            // Backspace Button
             if (enteredNumber.isNotEmpty()) {
                 IconButton(
                     onClick = {
@@ -278,9 +349,7 @@ fun DialerScreen(
                             callManager.playKeypadTone('9')
                         }
                     },
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .testTag("dialer_backspace_button")
+                    modifier = Modifier.testTag("dialer_backspace_button")
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Backspace,
@@ -288,10 +357,55 @@ fun DialerScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            } else {
+                Spacer(modifier = Modifier.width(48.dp))
             }
         }
 
-        Spacer(modifier = Modifier.weight(0.5f))
+        // Inline Helper / Validation Text (Task 6)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 2.dp)
+                .height(20.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (!selectedCountry.enabled) {
+                Text(
+                    text = "Calling ${selectedCountry.name} is not enabled on this account",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("dialer_helper_text")
+                )
+            } else if (enteredNumber.isNotEmpty()) {
+                if (!validationResult.isValid && validationResult.helperText != null) {
+                    Text(
+                        text = validationResult.helperText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("dialer_helper_text")
+                    )
+                } else if (validationResult.isValid) {
+                    Text(
+                        text = "Dial: ${validationResult.assembledE164}",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                        color = CallGreen,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("dialer_helper_text")
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(0.4f))
 
         // 3x4 Keypad Grid
         Column(
@@ -329,92 +443,95 @@ fun DialerScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Call Action & Test Incoming Simulation Row
+        // Call Action Row
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 36.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Test Incoming Call Trigger
-            Surface(
-                onClick = {
-                    val sampleName = if (allContacts.isNotEmpty()) allContacts.random().name else "Sarah Jenkins"
-                    val samplePhone = if (allContacts.isNotEmpty()) allContacts.random().phoneNumber else "+1 (415) 555-0102"
-                    callManager.triggerIncomingCall(samplePhone, sampleName)
-                },
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier
-                    .size(52.dp)
-                    .testTag("test_incoming_call_button")
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.PhoneCallback,
-                        contentDescription = "Simulate Incoming Call",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
+            // Invisible placeholder for balanced symmetrical layout
+            Spacer(modifier = Modifier.size(52.dp))
 
-            // Main Green Call Button
+            // Main Call Button (Enabled only if valid number, enabled country, & line available)
             Surface(
                 onClick = {
                     if (!isNumberAvailable) {
                         errorMessage = "Your calling number is currently unavailable."
+                    } else if (!selectedCountry.enabled) {
+                        errorMessage = "Calling ${selectedCountry.name} is not enabled on this account."
                     } else if (enteredNumber.isBlank()) {
                         errorMessage = "Please enter a phone number to call."
+                    } else if (!validationResult.isValid) {
+                        errorMessage = validationResult.helperText ?: "Please enter a valid phone number for ${selectedCountry.name}."
                     } else {
-                        val numberToCall = enteredNumber
-                        val matched = allContacts.firstOrNull { it.phoneNumber == numberToCall }
+                        val numberToCall = validationResult.assembledE164
+                        val matched = allContacts.firstOrNull {
+                            it.phoneNumber == numberToCall ||
+                            it.phoneNumber.filter { d -> d.isDigit() } == enteredNumber.filter { d -> d.isDigit() }
+                        }
                         initiateCallWithPermission(numberToCall, matched?.name)
                     }
                 },
                 shape = CircleShape,
-                color = if (isNumberAvailable) CallGreen else MaterialTheme.colorScheme.surfaceVariant,
-                shadowElevation = if (isNumberAvailable) 6.dp else 0.dp,
+                color = if (isCallAllowed) CallGreen else MaterialTheme.colorScheme.surfaceVariant,
+                shadowElevation = if (isCallAllowed) 6.dp else 0.dp,
                 modifier = Modifier
                     .size(68.dp)
                     .testTag("dialer_call_button")
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        imageVector = if (isNumberAvailable) Icons.Default.Call else Icons.Default.PhoneDisabled,
+                        imageVector = if (isCallAllowed) Icons.Default.Call else Icons.Default.PhoneDisabled,
                         contentDescription = "Call",
-                        tint = if (isNumberAvailable) Color.White else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        tint = if (isCallAllowed) Color.White else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                         modifier = Modifier.size(32.dp)
                     )
                 }
             }
 
-            // Clear All Button
-            Surface(
-                onClick = {
-                    enteredNumber = ""
-                    errorMessage = null
-                },
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier
-                    .size(52.dp)
-                    .testTag("dialer_clear_button")
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "C",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            // Clear All Button (or spacer if empty)
+            if (enteredNumber.isNotEmpty()) {
+                Surface(
+                    onClick = {
+                        enteredNumber = ""
+                        errorMessage = null
+                    },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .size(52.dp)
+                        .testTag("dialer_clear_button")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "C",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
+            } else {
+                Spacer(modifier = Modifier.size(52.dp))
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+    }
+
+    // Country Picker Bottom Sheet (Task 3)
+    if (showCountryPicker) {
+        CountryPickerBottomSheet(
+            countries = dialingCountries,
+            selectedCountry = selectedCountry,
+            onCountrySelected = { country ->
+                repository.setSelectedDialerCountry(country)
+            },
+            onDismiss = { showCountryPicker = false }
+        )
     }
 }
 

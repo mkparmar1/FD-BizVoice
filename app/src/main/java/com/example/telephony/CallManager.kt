@@ -152,7 +152,8 @@ class CallManager(
      * Initiates a client-originated outbound call using the Twilio Voice Client.
      */
     fun startOutgoingCall(phoneNumber: String, contactName: String? = null): Result<Unit> {
-        val cleanNumber = phoneNumber.trim()
+        val formattedNumber = PhoneNumberFormatter.formatToE164(phoneNumber, context = context)
+        val cleanNumber = formattedNumber.trim()
         if (cleanNumber.length < 3) {
             return Result.failure(Exception("Please enter a valid phone number."))
         }

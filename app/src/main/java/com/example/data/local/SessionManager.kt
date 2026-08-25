@@ -35,6 +35,9 @@ class SessionManager(context: Context) {
         private const val KEY_TWILIO_VOICE_TOKEN = "twilio_voice_token"
         private const val KEY_SAVED_LOGIN_EMAIL = "saved_login_email"
         private const val KEY_SAVED_LOGIN_PASSWORD = "saved_login_password"
+        private const val KEY_SELECTED_DIALER_COUNTRY_ISO = "selected_dialer_country_iso"
+        private const val KEY_CACHED_DIALING_COUNTRIES = "cached_dialing_countries_json"
+        private const val KEY_CACHED_DIALING_COUNTRIES_TS = "cached_dialing_countries_ts"
 
         const val THEME_SYSTEM = "SYSTEM"
         const val THEME_LIGHT = "LIGHT"
@@ -265,4 +268,16 @@ class SessionManager(context: Context) {
     fun getSavedLoginPassword(): String {
         return prefs.getString(KEY_SAVED_LOGIN_PASSWORD, "") ?: ""
     }
+
+    var selectedDialerCountryIso: String?
+        get() = prefs.getString(KEY_SELECTED_DIALER_COUNTRY_ISO, null)
+        set(value) = prefs.edit().putString(KEY_SELECTED_DIALER_COUNTRY_ISO, value).apply()
+
+    var cachedDialingCountriesJson: String?
+        get() = prefs.getString(KEY_CACHED_DIALING_COUNTRIES, null)
+        set(value) = prefs.edit().putString(KEY_CACHED_DIALING_COUNTRIES, value).apply()
+
+    var cachedDialingCountriesTimestamp: Long
+        get() = prefs.getLong(KEY_CACHED_DIALING_COUNTRIES_TS, 0L)
+        set(value) = prefs.edit().putLong(KEY_CACHED_DIALING_COUNTRIES_TS, value).apply()
 }

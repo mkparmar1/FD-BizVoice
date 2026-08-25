@@ -351,6 +351,17 @@ data class PurchasedNumberDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class DialingCountryDto(
+    @Json(name = "iso_code")
+    val isoCode: String = "",
+    val name: String = "",
+    @Json(name = "calling_code")
+    val callingCode: String = "",
+    val continent: String? = null,
+    val enabled: Boolean = true
+)
+
+@JsonClass(generateAdapter = true)
 data class CapabilityTokenDto(
     val identity: String,
     val token: String
@@ -879,6 +890,31 @@ data class Contact(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+@JsonClass(generateAdapter = true)
+data class DialingCountry(
+    val isoCode: String,
+    val name: String,
+    val callingCode: String,
+    val continent: String? = null,
+    val enabled: Boolean = true
+) {
+    val flagEmoji: String
+        get() = isoCodeToEmoji(isoCode)
+
+    companion object {
+        fun isoCodeToEmoji(isoCode: String): String {
+            val upper = isoCode.trim().uppercase()
+            if (upper.length != 2) return "🌐"
+            val first = upper[0]
+            val second = upper[1]
+            if (first !in 'A'..'Z' || second !in 'A'..'Z') return "🌐"
+            val firstCode = 0x1F1E6 + (first - 'A')
+            val secondCode = 0x1F1E6 + (second - 'A')
+            return String(Character.toChars(firstCode)) + String(Character.toChars(secondCode))
+        }
+    }
+}
+
 // =========================================================================
 // 12. MAPPER EXTENSIONS
 // =========================================================================
@@ -964,5 +1000,16 @@ fun GrowfoneContactDto.toContact(): Contact {
         isBlacklisted = isBlacklisted,
         notes = notes?.ifBlank { null },
         createdAt = parseIsoTimestamp(createdAt)
+    )
+}
+
+fun DialingCountryDto.toDialingCountry(): DialingCountry {
+    val formattedCode = if (callingCode.startsWith("+")) callingCode.trim() else "+${callingCode.trim()}"
+    return DialingCountry(
+        isoCode = isoCode.trim().uppercase(),
+        name = name.trim(),
+        callingCode = formattedCode,
+        continent = continent?.trim(),
+        enabled = enabled
     )
 }

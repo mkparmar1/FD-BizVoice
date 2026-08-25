@@ -7,12 +7,19 @@ import com.example.data.local.ContactEntity
 import com.example.data.local.SessionManager
 import com.example.data.model.*
 import com.example.data.remote.ApiClient
+import com.example.telephony.PhoneNumberFormatter
+import com.squareup.moshi.JsonAdapter
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -34,6 +41,10 @@ class BizVoiceRepository(
     private val callRecordDao = database.callRecordDao()
     private val contactDao = database.contactDao()
 
+    private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+    private val countryListType = Types.newParameterizedType(List::class.java, DialingCountryDto::class.java)
+    private val countryListAdapter: JsonAdapter<List<DialingCountryDto>> = moshi.adapter(countryListType)
+
     val currentUserFlow = sessionManager.currentUserFlow
     val authStateFlow = sessionManager.authStateFlow
 
@@ -48,6 +59,12 @@ class BizVoiceRepository(
             started = SharingStarted.Eagerly,
             initialValue = emptyList()
         )
+
+    private val _dialingCountriesFlow = MutableStateFlow<List<DialingCountry>>(loadInitialCountries())
+    val dialingCountriesFlow: StateFlow<List<DialingCountry>> = _dialingCountriesFlow.asStateFlow()
+
+    private val _selectedDialerCountryFlow = MutableStateFlow<DialingCountry>(resolveInitialCountry(_dialingCountriesFlow.value))
+    val selectedDialerCountryFlow: StateFlow<DialingCountry> = _selectedDialerCountryFlow.asStateFlow()
 
     private fun deduplicateCallRecords(records: List<CallRecord>): List<CallRecord> {
         val result = mutableListOf<CallRecord>()
@@ -88,6 +105,7 @@ class BizVoiceRepository(
 
     init {
         repositoryScope.launch {
+            refreshDialingCountries()
             if (sessionManager.isLoggedIn()) {
                 refreshCalls()
                 refreshContacts()
@@ -735,6 +753,156 @@ class BizVoiceRepository(
             Result.success(data)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    // ==========================================
+    // 11. DIALING COUNTRIES & DIALER PREFERENCES
+    // ==========================================
+
+    private fun sortCountries(countries: List<DialingCountry>): List<DialingCountry> {
+        val enabled = countries.filter { it.enabled }.sortedBy { it.name.lowercase() }
+        val disabled = countries.filter { !it.enabled }.sortedBy { it.name.lowercase() }
+        return enabled + disabled
+    }
+
+    private fun getFallbackCountries(): List<DialingCountry> {
+        return try {
+            val phoneUtil = PhoneNumberFormatter.getPhoneUtil(context)
+            val regions = phoneUtil.supportedRegions
+            val list = regions.mapNotNull { region ->
+                val countryCode = phoneUtil.getCountryCodeForRegion(region)
+                if (countryCode <= 0) return@mapNotNull null
+                val locale = java.util.Locale("", region)
+                val name = locale.displayCountry.ifBlank { region }
+                DialingCountry(
+                    isoCode = region.uppercase(java.util.Locale.ROOT),
+                    name = name,
+                    callingCode = "+$countryCode",
+                    continent = null,
+                    enabled = true
+                )
+            }
+            if (list.isNotEmpty()) sortCountries(list) else getHardcodedFallbackCountries()
+        } catch (_: Exception) {
+            getHardcodedFallbackCountries()
+        }
+    }
+
+    private fun getHardcodedFallbackCountries(): List<DialingCountry> {
+        return listOf(
+            DialingCountry("IN", "India", "+91", "Asia", true),
+            DialingCountry("US", "United States", "+1", "North America", true),
+            DialingCountry("GB", "United Kingdom", "+44", "Europe", true),
+            DialingCountry("CA", "Canada", "+1", "North America", true),
+            DialingCountry("AU", "Australia", "+61", "Oceania", true),
+            DialingCountry("SG", "Singapore", "+65", "Asia", true),
+            DialingCountry("AE", "United Arab Emirates", "+971", "Middle East", true),
+            DialingCountry("DE", "Germany", "+49", "Europe", true),
+            DialingCountry("FR", "France", "+33", "Europe", true)
+        )
+    }
+
+    private fun loadInitialCountries(): List<DialingCountry> {
+        val cachedJson = sessionManager.cachedDialingCountriesJson
+        if (!cachedJson.isNullOrBlank()) {
+            try {
+                val dtos = countryListAdapter.fromJson(cachedJson)
+                if (!dtos.isNullOrEmpty()) {
+                    return sortCountries(dtos.map { it.toDialingCountry() })
+                }
+            } catch (_: Exception) {}
+        }
+        return getFallbackCountries()
+    }
+
+    private fun resolveInitialCountry(countryList: List<DialingCountry>): DialingCountry {
+        val savedIso = sessionManager.selectedDialerCountryIso
+        if (!savedIso.isNullOrBlank()) {
+            val found = countryList.firstOrNull { it.isoCode.equals(savedIso, ignoreCase = true) }
+            if (found != null) return found
+        }
+
+        val inferredIso = PhoneNumberFormatter.inferDefaultRegion(context)
+        val inferred = countryList.firstOrNull { it.isoCode.equals(inferredIso, ignoreCase = true) }
+        if (inferred != null) return inferred
+
+        val defaultIn = countryList.firstOrNull { it.isoCode.equals("IN", ignoreCase = true) }
+        if (defaultIn != null) return defaultIn
+
+        return countryList.firstOrNull { it.enabled } ?: countryList.firstOrNull() ?: DialingCountry("IN", "India", "+91", "Asia", true)
+    }
+
+    private fun updateSelectedCountryFromList(newList: List<DialingCountry>) {
+        val currentSelected = _selectedDialerCountryFlow.value
+        val updated = newList.firstOrNull { it.isoCode.equals(currentSelected.isoCode, ignoreCase = true) }
+        if (updated != null) {
+            _selectedDialerCountryFlow.value = updated
+        } else {
+            _selectedDialerCountryFlow.value = resolveInitialCountry(newList)
+        }
+    }
+
+    suspend fun refreshDialingCountries(force: Boolean = false): Result<List<DialingCountry>> = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val cachedJson = sessionManager.cachedDialingCountriesJson
+        val cachedTs = sessionManager.cachedDialingCountriesTimestamp
+        val isCacheFresh = (now - cachedTs) < (24 * 60 * 60 * 1000L)
+
+        if (!force && isCacheFresh && !cachedJson.isNullOrBlank()) {
+            try {
+                val dtos = countryListAdapter.fromJson(cachedJson)
+                if (!dtos.isNullOrEmpty()) {
+                    val list = sortCountries(dtos.map { it.toDialingCountry() })
+                    _dialingCountriesFlow.value = list
+                    updateSelectedCountryFromList(list)
+                    return@withContext Result.success(list)
+                }
+            } catch (_: Exception) {}
+        }
+
+        val authKey = sessionManager.getDeviceAuthKey()
+        try {
+            val response = apiClient.getService().getDialingCountries(authKey)
+            if (response.isSuccessful && response.body() != null) {
+                val envelope = response.body()!!
+                val dtos = envelope.data
+                if (envelope.status == 200 && !dtos.isNullOrEmpty()) {
+                    val list = sortCountries(dtos.map { it.toDialingCountry() })
+                    try {
+                        val json = countryListAdapter.toJson(dtos)
+                        sessionManager.cachedDialingCountriesJson = json
+                        sessionManager.cachedDialingCountriesTimestamp = now
+                    } catch (_: Exception) {}
+                    _dialingCountriesFlow.value = list
+                    updateSelectedCountryFromList(list)
+                    return@withContext Result.success(list)
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Fallback: cached list if present, else libphonenumber fallback
+        val fallbackList = if (!cachedJson.isNullOrBlank()) {
+            try {
+                countryListAdapter.fromJson(cachedJson)?.map { it.toDialingCountry() }
+            } catch (_: Exception) { null }
+        } else null
+
+        val finalList = sortCountries(fallbackList ?: getFallbackCountries())
+        _dialingCountriesFlow.value = finalList
+        updateSelectedCountryFromList(finalList)
+        Result.success(finalList)
+    }
+
+    fun setSelectedDialerCountry(country: DialingCountry) {
+        sessionManager.selectedDialerCountryIso = country.isoCode
+        _selectedDialerCountryFlow.value = country
+    }
+
+    fun setSelectedDialerCountryByIso(isoCode: String) {
+        val found = _dialingCountriesFlow.value.firstOrNull { it.isoCode.equals(isoCode, ignoreCase = true) }
+        if (found != null) {
+            setSelectedDialerCountry(found)
         }
     }
 }

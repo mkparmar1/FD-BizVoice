@@ -91,6 +91,9 @@ interface LaravelApiService {
     @GET("getCapabilityToken")
     suspend fun getCapabilityToken(@Header("authToken") authToken: String): Response<GrowfoneStatusIntEnvelope<CapabilityTokenDto>>
 
+    @GET("getDialingCountries")
+    suspend fun getDialingCountries(@Header("authToken") authToken: String): Response<GrowfoneStatusIntEnvelope<List<DialingCountryDto>>>
+
     @POST("getCallLogs")
     suspend fun getCallLogs(
         @Header("authToken") authToken: String,
