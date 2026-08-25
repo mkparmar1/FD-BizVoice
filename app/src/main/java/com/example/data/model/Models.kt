@@ -118,9 +118,9 @@ data class ChangePasswordRequest(
 
 @JsonClass(generateAdapter = true)
 data class GrowfoneUserDto(
-    val id: String,
+    val id: String? = null,
     val name: String? = "",
-    val email: String = "",
+    val email: String? = "",
     @Json(name = "email_verified_at")
     val emailVerifiedAt: String? = "",
     @Json(name = "phone_number")
@@ -155,8 +155,8 @@ data class GrowfoneUserDto(
 
 @JsonClass(generateAdapter = true)
 data class AdminLoginDataDto(
-    val user: GrowfoneUserDto,
-    val token: String
+    val user: GrowfoneUserDto? = null,
+    val token: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -369,7 +369,12 @@ data class CapabilityTokenDto(
 
 @JsonClass(generateAdapter = true)
 data class GetCallLogsRequest(
-    val twilioNumber: String
+    @Json(name = "twilioNumber")
+    val twilioNumber: String,
+    @Json(name = "authToken")
+    val authToken: String? = null,
+    @Json(name = "auth_key")
+    val authKey: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -940,9 +945,9 @@ fun parseIsoTimestamp(isoString: String?): Long {
 fun GrowfoneUserDto.toUser(assignedNumber: String? = null): User {
     val phone = if (!assignedNumber.isNullOrBlank()) assignedNumber else phoneNumber
     return User(
-        id = id,
+        id = id?.ifBlank { "user_default" } ?: "user_default",
         name = name?.ifBlank { "User" } ?: "User",
-        email = email,
+        email = email.orEmpty(),
         assignedPhoneNumber = phone?.ifBlank { null },
         status = status ?: "active",
         role = if (roleId?.isNotBlank() == true) "Team Member" else "user",

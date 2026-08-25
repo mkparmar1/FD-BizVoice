@@ -72,8 +72,16 @@ class SessionManager(context: Context) {
         val cleanPhone = user.assignedPhoneNumber?.trim()?.ifBlank { null } ?: "+12183061691"
         val sanitizedUser = user.copy(assignedPhoneNumber = cleanPhone)
 
+        val trimmedToken = token.trim()
+        val effectiveAuthKey = when {
+            !deviceAuthKey.isNullOrBlank() -> deviceAuthKey.trim()
+            !user.authKey.isNullOrBlank() -> user.authKey!!.trim()
+            else -> trimmedToken
+        }
+
         val editor = prefs.edit()
-            .putString(KEY_AUTH_TOKEN, token)
+            .putString(KEY_AUTH_TOKEN, trimmedToken)
+            .putString(KEY_DEVICE_AUTH_KEY, effectiveAuthKey)
             .putString(KEY_USER_ID, sanitizedUser.id)
             .putString(KEY_USER_NAME, sanitizedUser.name)
             .putString(KEY_USER_EMAIL, sanitizedUser.email)
@@ -83,19 +91,13 @@ class SessionManager(context: Context) {
             .putString(KEY_USER_COMPANY, sanitizedUser.company)
             .putInt(KEY_USER_CREDITS, sanitizedUser.credits)
 
-        if (deviceAuthKey != null) {
-            editor.putString(KEY_DEVICE_AUTH_KEY, deviceAuthKey)
-        } else if (user.authKey != null) {
-            editor.putString(KEY_DEVICE_AUTH_KEY, user.authKey)
-        }
-
         if (twilioToken != null) {
             editor.putString(KEY_TWILIO_VOICE_TOKEN, twilioToken)
         }
         editor.apply()
 
         _authStateFlow.value = true
-        _currentUserFlow.value = sanitizedUser
+        _currentUserFlow.value = sanitizedUser.copy(authKey = effectiveAuthKey)
     }
 
     fun saveTwilioVoiceToken(token: String?) {
@@ -137,7 +139,7 @@ class SessionManager(context: Context) {
     }
 
     fun updateFullProfile(user: User) {
-        prefs.edit()
+        val editor = prefs.edit()
             .putString(KEY_USER_NAME, user.name)
             .putString(KEY_USER_EMAIL, user.email)
             .putString(KEY_ASSIGNED_PHONE, user.assignedPhoneNumber)
@@ -145,23 +147,45 @@ class SessionManager(context: Context) {
             .putString(KEY_USER_ROLE, user.role)
             .putString(KEY_USER_COMPANY, user.company)
             .putInt(KEY_USER_CREDITS, user.credits)
-            .apply()
+
+        if (!user.authKey.isNullOrBlank()) {
+            editor.putString(KEY_DEVICE_AUTH_KEY, user.authKey.trim())
+        }
+        editor.apply()
         _currentUserFlow.value = user
     }
 
     fun getAuthToken(): String? {
-        return prefs.getString(KEY_AUTH_TOKEN, null)
+        val token = prefs.getString(KEY_AUTH_TOKEN, null)?.trim()
+        return if (token.isNullOrBlank()) null else token
     }
 
     fun getDeviceAuthKey(): String {
-        return prefs.getString(KEY_DEVICE_AUTH_KEY, null)
-            ?: getCurrentUser()?.authKey
-            ?: getAuthToken()
-            ?: "device_auth_key_default"
+        val stored = prefs.getString(KEY_DEVICE_AUTH_KEY, null)?.trim()
+        if (!stored.isNullOrBlank() && stored != "device_auth_key_default") {
+            return stored
+        }
+        val token = getAuthToken()
+        if (!token.isNullOrBlank()) {
+            return token
+        }
+        val userAuthKey = getCurrentUser()?.authKey?.trim()
+        if (!userAuthKey.isNullOrBlank()) {
+            return userAuthKey
+        }
+        return ""
+    }
+
+    fun getEffectiveAuthToken(): String {
+        val token = getAuthToken()
+        if (!token.isNullOrBlank()) return token
+        val deviceAuth = getDeviceAuthKey()
+        if (deviceAuth.isNotBlank() && deviceAuth != "device_auth_key_default") return deviceAuth
+        return ""
     }
 
     fun setDeviceAuthKey(key: String) {
-        prefs.edit().putString(KEY_DEVICE_AUTH_KEY, key).apply()
+        prefs.edit().putString(KEY_DEVICE_AUTH_KEY, key.trim()).apply()
     }
 
     fun getSecretKey(): String {
@@ -173,7 +197,7 @@ class SessionManager(context: Context) {
     }
 
     fun isLoggedIn(): Boolean {
-        return !getAuthToken().isNullOrBlank()
+        return getEffectiveAuthToken().isNotBlank()
     }
 
     fun getCurrentUser(): User? {
@@ -185,7 +209,7 @@ class SessionManager(context: Context) {
         val role = prefs.getString(KEY_USER_ROLE, "user") ?: "user"
         val company = prefs.getString(KEY_USER_COMPANY, "BizVoice Global Corp") ?: "BizVoice Global Corp"
         val credits = prefs.getInt(KEY_USER_CREDITS, 250)
-        val authKey = prefs.getString(KEY_DEVICE_AUTH_KEY, null)
+        val authKey = prefs.getString(KEY_DEVICE_AUTH_KEY, null)?.ifBlank { null } ?: getAuthToken()
 
         return User(
             id = id,
@@ -204,6 +228,7 @@ class SessionManager(context: Context) {
         prefs.edit()
             .remove(KEY_AUTH_TOKEN)
             .remove(KEY_DEVICE_AUTH_KEY)
+            .remove(KEY_TWILIO_VOICE_TOKEN)
             .remove(KEY_USER_ID)
             .remove(KEY_USER_NAME)
             .remove(KEY_USER_EMAIL)

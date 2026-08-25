@@ -344,7 +344,7 @@ fun ProfileScreen(
                 ) {
                     Icon(Icons.Default.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Log Out from BizVoice", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+                    Text("Log Out", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))

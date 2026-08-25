@@ -131,21 +131,89 @@ class BizVoiceRepository(
             val response = apiClient.getService().adminLogin(LoginRequest(email, password))
             if (response.isSuccessful && response.body() != null) {
                 val body = response.body()!!
-                val data = body.data ?: return@withContext Result.failure(Exception(body.message ?: "Invalid credentials"))
-                val user = data.user.toUser()
-                val token = data.token
+                val code = body.code ?: 200
+
+                if (code !in 200..299) {
+                    val friendlyMsg = extractFriendlyErrorMessage(
+                        rawErrorBody = null,
+                        httpCode = code,
+                        apiMessage = body.message,
+                        defaultFallback = "Invalid email or password. Please check your credentials."
+                    )
+                    return@withContext Result.failure(Exception(friendlyMsg))
+                }
+
+                val data = body.data
+                val token = data?.token?.trim()
+
+                // If auth token is missing or empty, login MUST NOT succeed
+                if (data == null || token.isNullOrBlank()) {
+                    val friendlyMsg = extractFriendlyErrorMessage(
+                        rawErrorBody = null,
+                        httpCode = 401,
+                        apiMessage = body.message,
+                        defaultFallback = "Invalid email or password. Please check your credentials."
+                    )
+                    return@withContext Result.failure(Exception(friendlyMsg))
+                }
+
+                val rawUser = data.user
+                val userStatus = rawUser?.status?.trim()?.lowercase() ?: ""
+                val isInactive = userStatus == "inactive" || 
+                                 userStatus == "suspended" || 
+                                 userStatus == "disabled" || 
+                                 userStatus == "blocked" || 
+                                 userStatus == "0" || 
+                                 userStatus == "false"
+
+                if (isInactive) {
+                    return@withContext Result.failure(
+                        Exception("Your account is inactive. Please contact your administrator to activate your account.")
+                    )
+                }
+
+                val user = rawUser?.toUser() ?: return@withContext Result.failure(
+                    Exception("Unable to load user account profile. Please try again.")
+                )
+
+                if (user.status.equals("inactive", ignoreCase = true) || 
+                    user.status.equals("suspended", ignoreCase = true) ||
+                    user.status.equals("disabled", ignoreCase = true)) {
+                    return@withContext Result.failure(
+                        Exception("Your account is inactive. Please contact your administrator to activate your account.")
+                    )
+                }
 
                 sessionManager.saveAuth(token = token, user = user, deviceAuthKey = user.authKey)
-                refreshUserData()
-                refreshCalls()
-                refreshContacts()
+                refreshUserData(forceRefresh = true)
+                refreshCalls(forceRefresh = true)
+                refreshContacts(forceRefresh = true)
                 Result.success(user)
             } else {
-                val errorMsg = response.errorBody()?.string() ?: "Login failed. Code: ${response.code()}"
-                Result.failure(Exception(errorMsg))
+                val rawError = response.errorBody()?.string()
+                val friendlyMsg = extractFriendlyErrorMessage(
+                    rawErrorBody = rawError,
+                    httpCode = response.code(),
+                    defaultFallback = "Invalid email or password. Please check your credentials."
+                )
+                Result.failure(Exception(friendlyMsg))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            val friendlyMsg = when {
+                e is java.net.UnknownHostException || e is java.net.ConnectException ->
+                    "Unable to connect to the server. Please check your internet connection."
+                e is java.net.SocketTimeoutException ->
+                    "Connection timed out. Please try again."
+                else -> {
+                    val raw = e.localizedMessage ?: "Invalid email or password. Please check your credentials."
+                    if (raw.startsWith("{") || raw.contains("<html", ignoreCase = true) || raw.contains("JsonDataException", ignoreCase = true)) {
+                        "Invalid email or password. Please check your credentials."
+                    } else {
+                        raw
+                    }
+                }
+            }
+            Result.failure(Exception(friendlyMsg))
         }
     }
 
@@ -163,7 +231,13 @@ class BizVoiceRepository(
                 val user = res.body()!!.data!!.toUser()
                 Result.success(user)
             } else {
-                Result.failure(Exception(res.errorBody()?.string() ?: "Registration failed"))
+                val rawError = res.errorBody()?.string()
+                val friendly = extractFriendlyErrorMessage(
+                    rawErrorBody = rawError,
+                    httpCode = res.code(),
+                    defaultFallback = "Registration failed. Please check the entered information."
+                )
+                Result.failure(Exception(friendly))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -177,7 +251,13 @@ class BizVoiceRepository(
                 val body = res.body()!!
                 Result.success(SimpleApiResponse(success = body.status ?: true, message = body.message ?: "Reset link sent"))
             } else {
-                Result.failure(Exception(res.errorBody()?.string() ?: "Failed to send reset link"))
+                val rawError = res.errorBody()?.string()
+                val friendly = extractFriendlyErrorMessage(
+                    rawErrorBody = rawError,
+                    httpCode = res.code(),
+                    defaultFallback = "Failed to send password reset link."
+                )
+                Result.failure(Exception(friendly))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -190,9 +270,15 @@ class BizVoiceRepository(
                 ResetPasswordRequest(token = token, password = password, passwordConfirmation = password)
             )
             if (res.isSuccessful && res.body() != null) {
-                Result.success(SimpleApiResponse(success = res.body()?.status ?: true, message = res.body()?.message ?: "Password reset"))
+                Result.success(SimpleApiResponse(success = res.body()?.status ?: true, message = res.body()?.message ?: "Password reset successfully"))
             } else {
-                Result.failure(Exception(res.errorBody()?.string() ?: "Reset failed"))
+                val rawError = res.errorBody()?.string()
+                val friendly = extractFriendlyErrorMessage(
+                    rawErrorBody = rawError,
+                    httpCode = res.code(),
+                    defaultFallback = "Password reset failed. Please check your reset token."
+                )
+                Result.failure(Exception(friendly))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -233,11 +319,21 @@ class BizVoiceRepository(
                     Result.success(user)
                 } else {
                     val errorMsg = res.errorBody()?.string() ?: "Failed to fetch user profile (HTTP ${res.code()})"
-                    Log.e("BizVoiceRepository", "getProfile failed: $errorMsg")
+                    if (res.code() == 401 || errorMsg.contains("expired", ignoreCase = true) || errorMsg.contains("Auth token", ignoreCase = true)) {
+                        sessionManager.notifyUnauthorized("Your session has expired. Please log in again.")
+                        Log.w("BizVoiceRepository", "getProfile session expired: $errorMsg")
+                    } else {
+                        Log.e("BizVoiceRepository", "getProfile failed: $errorMsg")
+                    }
                     Result.failure(Exception(errorMsg))
                 }
             } catch (e: Exception) {
-                Log.e("BizVoiceRepository", "getProfile exception: ${e.message}", e)
+                if (e.message?.contains("expired", ignoreCase = true) == true || e.message?.contains("Auth token", ignoreCase = true) == true) {
+                    sessionManager.notifyUnauthorized("Your session has expired. Please log in again.")
+                    Log.w("BizVoiceRepository", "getProfile session expired exception: ${e.message}")
+                } else {
+                    Log.e("BizVoiceRepository", "getProfile exception: ${e.message}", e)
+                }
                 Result.failure(e)
             }
         }
@@ -312,8 +408,12 @@ class BizVoiceRepository(
     // ==========================================
 
     suspend fun fetchAssignedNumber(): Result<PurchasedNumberDto?> = withContext(Dispatchers.IO) {
+        val authKey = sessionManager.getDeviceAuthKey().ifBlank { sessionManager.getEffectiveAuthToken() }
+        if (authKey.isBlank()) {
+            return@withContext Result.failure(Exception("Authentication required"))
+        }
         try {
-            val res = apiClient.getService().getNumberDetails(sessionManager.getDeviceAuthKey())
+            val res = apiClient.getService().getNumberDetails(authKey)
             val phoneDto = res.body()?.data
             if (phoneDto != null && phoneDto.phoneNumber.isNotBlank()) {
                 sessionManager.updateAssignedNumber(phoneDto.phoneNumber)
@@ -377,7 +477,15 @@ class BizVoiceRepository(
 
     suspend fun getCapabilityToken(forceRefresh: Boolean = false): Result<CapabilityTokenDto> = withContext(Dispatchers.IO) {
         try {
-            val authKey = sessionManager.getDeviceAuthKey()
+            val authKey = sessionManager.getDeviceAuthKey().ifBlank { sessionManager.getEffectiveAuthToken() }
+            if (authKey.isBlank()) {
+                val cachedToken = sessionManager.getTwilioVoiceToken()
+                if (!cachedToken.isNullOrBlank()) {
+                    val identity = sessionManager.getCurrentUser()?.email ?: "agent_user"
+                    return@withContext Result.success(CapabilityTokenDto(identity = identity, token = cachedToken))
+                }
+                return@withContext Result.failure(Exception("Authentication required"))
+            }
             val res = apiClient.getService().getCapabilityToken(authKey)
             if (res.isSuccessful && res.body()?.data != null && !res.body()!!.data!!.token.isNullOrBlank()) {
                 val data = res.body()!!.data!!
@@ -410,14 +518,25 @@ class BizVoiceRepository(
             if (!forceRefresh && search == null && (now - lastCallsFetchTime) < 2000L && allCallsFlow.value.isNotEmpty()) {
                 return@withContext Result.success(allCallsFlow.value)
             }
+            val effectiveAuth = sessionManager.getEffectiveAuthToken()
+            if (effectiveAuth.isBlank()) {
+                return@withContext Result.failure(Exception("Authentication required"))
+            }
+            val deviceAuth = sessionManager.getDeviceAuthKey().ifBlank { effectiveAuth }
             try {
-                val currentNum = sessionManager.getCurrentUser()?.assignedPhoneNumber ?: "+15416342748"
+                val currentNum = sessionManager.getCurrentUser()?.assignedPhoneNumber ?: "+1234567891"
                 val res = apiClient.getService().getCallLogs(
-                    authToken = sessionManager.getDeviceAuthKey(),
-                    req = GetCallLogsRequest(twilioNumber = currentNum)
+                    authToken = deviceAuth,
+                    req = GetCallLogsRequest(
+                        twilioNumber = currentNum,
+                        authToken = deviceAuth,
+                        authKey = deviceAuth
+                    )
                 )
                 if (res.isSuccessful && res.body() != null) {
-                    val list = res.body()!!.data ?: emptyList()
+                    val body = res.body()!!
+                    val status = body.status ?: 200
+                    val list = body.data ?: emptyList()
                     val calls: List<CallRecord> = list.mapIndexed { idx, dto -> dto.toCallRecord(idx) }
                     if (calls.isNotEmpty()) {
                         val entities = calls.map { CallRecordEntity.fromCallRecord(it) }
@@ -427,12 +546,14 @@ class BizVoiceRepository(
                     Result.success(calls)
                 } else {
                     val errorMsg = res.errorBody()?.string() ?: "Failed to fetch call logs (HTTP ${res.code()})"
-                    Log.e("BizVoiceRepository", "getCallLogs failed: $errorMsg")
-                    Result.failure(Exception(errorMsg))
+                    Log.w("BizVoiceRepository", "getCallLogs response: $errorMsg")
+                    val existing = allCallsFlow.value
+                    Result.success(existing)
                 }
             } catch (e: Exception) {
-                Log.e("BizVoiceRepository", "getCallLogs exception: ${e.message}", e)
-                Result.failure(e)
+                Log.w("BizVoiceRepository", "getCallLogs exception: ${e.message}")
+                val existing = allCallsFlow.value
+                Result.success(existing)
             }
         }
     }
@@ -467,6 +588,11 @@ class BizVoiceRepository(
             if (!forceRefresh && search == null && isDnd == null && isBlacklisted == null && (now - lastContactsFetchTime) < 2000L && allContactsFlow.value.isNotEmpty()) {
                 return@withContext Result.success(allContactsFlow.value)
             }
+            val effectiveAuth = sessionManager.getEffectiveAuthToken()
+            if (effectiveAuth.isBlank()) {
+                sessionManager.notifyUnauthorized("Please log in to view contacts.")
+                return@withContext Result.failure(Exception("Authentication required"))
+            }
             try {
                 val res = apiClient.getService().getContacts(
                     name = search,
@@ -474,7 +600,13 @@ class BizVoiceRepository(
                     isBlacklisted = isBlacklisted
                 )
                 if (res.isSuccessful && res.body() != null) {
-                    val data = res.body()!!.data
+                    val body = res.body()!!
+                    val code = body.code ?: 200
+                    if (code == 401 || body.message?.contains("expired", ignoreCase = true) == true || body.message?.contains("Auth token", ignoreCase = true) == true) {
+                        sessionManager.notifyUnauthorized("Your session has expired. Please log in again.")
+                        return@withContext Result.failure(Exception("Your session has expired. Please log in again."))
+                    }
+                    val data = body.data
                     val contacts: List<Contact> = data?.data?.map { it.toContact() } ?: emptyList()
                     if (contacts.isNotEmpty()) {
                         val entities = contacts.map { ContactEntity.fromContact(it) }
@@ -484,11 +616,21 @@ class BizVoiceRepository(
                     Result.success(contacts)
                 } else {
                     val errorMsg = res.errorBody()?.string() ?: "Failed to fetch contacts (HTTP ${res.code()})"
-                    Log.e("BizVoiceRepository", "getContacts failed: $errorMsg")
+                    if (res.code() == 401 || errorMsg.contains("expired", ignoreCase = true) || errorMsg.contains("Auth token", ignoreCase = true)) {
+                        sessionManager.notifyUnauthorized("Your session has expired. Please log in again.")
+                        Log.w("BizVoiceRepository", "getContacts session expired: $errorMsg")
+                    } else {
+                        Log.e("BizVoiceRepository", "getContacts failed: $errorMsg")
+                    }
                     Result.failure(Exception(errorMsg))
                 }
             } catch (e: Exception) {
-                Log.e("BizVoiceRepository", "getContacts exception: ${e.message}", e)
+                if (e.message?.contains("expired", ignoreCase = true) == true || e.message?.contains("Auth token", ignoreCase = true) == true) {
+                    sessionManager.notifyUnauthorized("Your session has expired. Please log in again.")
+                    Log.w("BizVoiceRepository", "getContacts session expired exception: ${e.message}")
+                } else {
+                    Log.e("BizVoiceRepository", "getContacts exception: ${e.message}", e)
+                }
                 Result.failure(e)
             }
         }
@@ -899,25 +1041,27 @@ class BizVoiceRepository(
             } catch (_: Exception) {}
         }
 
-        val authKey = sessionManager.getDeviceAuthKey()
-        try {
-            val response = apiClient.getService().getDialingCountries(authKey)
-            if (response.isSuccessful && response.body() != null) {
-                val envelope = response.body()!!
-                val dtos = envelope.data
-                if (envelope.status == 200 && !dtos.isNullOrEmpty()) {
-                    val list = sortCountries(dtos.map { it.toDialingCountry() })
-                    try {
-                        val json = countryListAdapter.toJson(dtos)
-                        sessionManager.cachedDialingCountriesJson = json
-                        sessionManager.cachedDialingCountriesTimestamp = now
-                    } catch (_: Exception) {}
-                    _dialingCountriesFlow.value = list
-                    updateSelectedCountryFromList(list)
-                    return@withContext Result.success(list)
+        val authKey = sessionManager.getDeviceAuthKey().ifBlank { sessionManager.getEffectiveAuthToken() }
+        if (authKey.isNotBlank()) {
+            try {
+                val response = apiClient.getService().getDialingCountries(authKey)
+                if (response.isSuccessful && response.body() != null) {
+                    val envelope = response.body()!!
+                    val dtos = envelope.data
+                    if (envelope.status == 200 && !dtos.isNullOrEmpty()) {
+                        val list = sortCountries(dtos.map { it.toDialingCountry() })
+                        try {
+                            val json = countryListAdapter.toJson(dtos)
+                            sessionManager.cachedDialingCountriesJson = json
+                            sessionManager.cachedDialingCountriesTimestamp = now
+                        } catch (_: Exception) {}
+                        _dialingCountriesFlow.value = list
+                        updateSelectedCountryFromList(list)
+                        return@withContext Result.success(list)
+                    }
                 }
-            }
-        } catch (_: Exception) {}
+            } catch (_: Exception) {}
+        }
 
         // Fallback: cached list if present, else libphonenumber fallback
         val fallbackList = if (!cachedJson.isNullOrBlank()) {
@@ -941,6 +1085,105 @@ class BizVoiceRepository(
         val found = _dialingCountriesFlow.value.firstOrNull { it.isoCode.equals(isoCode, ignoreCase = true) }
         if (found != null) {
             setSelectedDialerCountry(found)
+        }
+    }
+
+    private fun extractFriendlyErrorMessage(
+        rawErrorBody: String?,
+        httpCode: Int? = null,
+        apiMessage: String? = null,
+        defaultFallback: String = "Login failed. Please check your credentials."
+    ): String {
+        // 1. If apiMessage is provided and clean
+        if (!apiMessage.isNullOrBlank()) {
+            val clean = sanitizeMessage(apiMessage)
+            if (clean.isNotBlank()) return clean
+        }
+
+        // 2. Try JSON extraction from rawErrorBody
+        if (!rawErrorBody.isNullOrBlank()) {
+            try {
+                val trimmed = rawErrorBody.trim()
+                if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                    val json = org.json.JSONObject(trimmed)
+
+                    // Check Laravel validation error list first: errors: { email: ["The email field is required."] }
+                    if (json.has("errors")) {
+                        val errorsObj = json.optJSONObject("errors")
+                        if (errorsObj != null && errorsObj.length() > 0) {
+                            val firstKey = errorsObj.keys().next()
+                            val firstArr = errorsObj.optJSONArray(firstKey)
+                            if (firstArr != null && firstArr.length() > 0) {
+                                val item = firstArr.optString(0)
+                                val clean = sanitizeMessage(item)
+                                if (clean.isNotBlank()) return clean
+                            }
+                        }
+                    }
+
+                    // Check message
+                    if (json.has("message")) {
+                        val msg = json.optString("message")
+                        val clean = sanitizeMessage(msg)
+                        if (clean.isNotBlank()) return clean
+                    }
+
+                    // Check error
+                    if (json.has("error")) {
+                        val err = json.optString("error")
+                        val clean = sanitizeMessage(err)
+                        if (clean.isNotBlank()) return clean
+                    }
+
+                    // Check detail / msg
+                    if (json.has("detail")) {
+                        val detail = json.optString("detail")
+                        val clean = sanitizeMessage(detail)
+                        if (clean.isNotBlank()) return clean
+                    }
+                    if (json.has("msg")) {
+                        val msg = json.optString("msg")
+                        val clean = sanitizeMessage(msg)
+                        if (clean.isNotBlank()) return clean
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 3. Status code heuristics
+        return when (httpCode) {
+            400, 401, 403 -> "Invalid email or password. Please check your credentials."
+            422 -> "Invalid credentials provided. Please check your details and try again."
+            404 -> "Authentication service unavailable. Please try again later."
+            429 -> "Too many attempts. Please wait a moment and try again."
+            500, 502, 503 -> "Server error. Please try again later."
+            else -> defaultFallback
+        }
+    }
+
+    private fun sanitizeMessage(msg: String): String {
+        val trimmed = msg.trim()
+        if (trimmed.isBlank() || trimmed.equals("null", ignoreCase = true)) return ""
+        if (trimmed.startsWith("{") || trimmed.contains("<html", ignoreCase = true) || trimmed.contains("<!DOCTYPE", ignoreCase = true)) {
+            return ""
+        }
+        return when {
+            trimmed.contains("inactive", ignoreCase = true) ||
+            trimmed.contains("suspended", ignoreCase = true) ||
+            trimmed.contains("disabled", ignoreCase = true) ||
+            trimmed.contains("deactivated", ignoreCase = true) ||
+            trimmed.contains("not active", ignoreCase = true) ||
+            trimmed.contains("account is locked", ignoreCase = true) ->
+                "Your account is inactive. Please contact your administrator to activate your account."
+            trimmed.contains("These credentials do not match our records", ignoreCase = true) ->
+                "Invalid email or password. Please check your credentials."
+            trimmed.contains("Unauthenticated", ignoreCase = true) ->
+                "Invalid email or password. Please check your credentials."
+            trimmed.contains("Unauthorized", ignoreCase = true) ->
+                "Invalid email or password. Please check your credentials."
+            trimmed.contains("SQLSTATE", ignoreCase = true) || trimmed.contains("Exception:", ignoreCase = true) ->
+                "An unexpected server error occurred. Please try again."
+            else -> trimmed
         }
     }
 }

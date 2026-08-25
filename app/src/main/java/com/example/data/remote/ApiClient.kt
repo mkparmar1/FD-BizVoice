@@ -17,18 +17,25 @@ class ApiClient(private val sessionManager: SessionManager) {
         val original = chain.request()
         val builder = original.newBuilder()
 
-        val token = sessionManager.getAuthToken()
-        if (!token.isNullOrBlank()) {
-            builder.header("Authorization", "Bearer $token")
+        val jwtToken = sessionManager.getAuthToken()
+        if (!jwtToken.isNullOrBlank()) {
+            builder.header("Authorization", "Bearer $jwtToken")
         }
+
         val deviceAuth = sessionManager.getDeviceAuthKey()
-        if (deviceAuth.isNotBlank()) {
+        if (deviceAuth.isNotBlank() && deviceAuth != "device_auth_key_default") {
             builder.header("authToken", deviceAuth)
             builder.header("auth-token", deviceAuth)
+            builder.header("auth_token", deviceAuth)
+            builder.header("token", deviceAuth)
             builder.header("authKey", deviceAuth)
             builder.header("auth_key", deviceAuth)
+        } else if (!jwtToken.isNullOrBlank()) {
+            builder.header("authToken", jwtToken)
+            builder.header("auth-token", jwtToken)
         }
-        val secretKey = sessionManager.getSecretKey()
+
+        val secretKey = sessionManager.getSecretKey().trim()
         if (secretKey.isNotBlank()) {
             builder.header("secretKey", secretKey)
             builder.header("secret-key", secretKey)
@@ -43,11 +50,27 @@ class ApiClient(private val sessionManager: SessionManager) {
     private val unauthorizedInterceptor = Interceptor { chain ->
         val request = chain.request()
         val response = chain.proceed(request)
-        if (response.code == 401) {
-            val path = request.url.encodedPath
-            val isAuthEndpoint = path.contains("admin/login") || path.contains("sign-in") || path.contains("create-profile")
-            if (!isAuthEndpoint && sessionManager.isLoggedIn()) {
-                sessionManager.notifyUnauthorized("Session expired or unauthorized (401). Please log in again.")
+        val path = request.url.encodedPath
+        val isAuthEndpoint = path.contains("admin/login") || path.contains("sign-in") || path.contains("create-profile") || path.contains("password/forgot") || path.contains("password/reset")
+
+        if (!isAuthEndpoint && sessionManager.isLoggedIn()) {
+            var isUnauthorized = response.code == 401 || response.code == 403
+            if (!isUnauthorized) {
+                try {
+                    val peekBody = response.peekBody(2048).string()
+                    if (peekBody.contains("Auth Token is expired", ignoreCase = true) ||
+                        peekBody.contains("Auth token can not be empty", ignoreCase = true) ||
+                        peekBody.contains("\"status\":401") ||
+                        peekBody.contains("\"code\":401") ||
+                        peekBody.contains("Unauthenticated.", ignoreCase = true)
+                    ) {
+                        isUnauthorized = true
+                    }
+                } catch (_: Exception) {}
+            }
+
+            if (isUnauthorized) {
+                sessionManager.notifyUnauthorized("Your session has expired. Please log in again.")
             }
         }
         response
