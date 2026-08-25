@@ -55,6 +55,11 @@ class SessionManager(context: Context) {
     private val _themeModeFlow = MutableStateFlow(prefs.getString(KEY_THEME_MODE, THEME_SYSTEM) ?: THEME_SYSTEM)
     val themeModeFlow: StateFlow<String> = _themeModeFlow.asStateFlow()
 
+    init {
+        // Production Mode: permanently purge and disable any mock backend flag
+        prefs.edit().remove(KEY_USE_MOCK_BACKEND).apply()
+    }
+
     fun saveAuth(
         token: String,
         user: User,
@@ -220,15 +225,8 @@ class SessionManager(context: Context) {
         get() = prefs.getString(KEY_BASE_API_URL, DEFAULT_API_URL) ?: DEFAULT_API_URL
         set(value) = prefs.edit().putString(KEY_BASE_API_URL, value).apply()
 
-    var useMockBackend: Boolean
-        get() = if (com.example.BuildConfig.DEBUG) prefs.getBoolean(KEY_USE_MOCK_BACKEND, false) else false
-        set(value) {
-            if (com.example.BuildConfig.DEBUG) {
-                prefs.edit().putBoolean(KEY_USE_MOCK_BACKEND, value).apply()
-            } else {
-                prefs.edit().putBoolean(KEY_USE_MOCK_BACKEND, false).apply()
-            }
-        }
+    val useMockBackend: Boolean
+        get() = false
 
     var defaultSpeaker: Boolean
         get() = prefs.getBoolean(KEY_DEFAULT_SPEAKER, false)

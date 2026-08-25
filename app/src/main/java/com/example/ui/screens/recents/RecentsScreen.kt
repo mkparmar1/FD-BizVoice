@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.CallDirection
 import com.example.data.model.CallRecord
+import com.example.data.model.CallRecordStatus
 import com.example.data.repository.BizVoiceRepository
 import com.example.telephony.CallManager
 import com.example.ui.components.BizAvatar
@@ -239,13 +240,18 @@ private fun CallHistoryItem(
         sdf.format(Date(call.timestamp))
     }
 
-    val formattedDuration = remember(call.durationSeconds) {
-        if (call.direction == CallDirection.MISSED || call.durationSeconds == 0L) {
-            "Missed"
-        } else {
-            val mins = call.durationSeconds / 60
-            val secs = call.durationSeconds % 60
-            String.format(Locale.getDefault(), "%02d:%02d", mins, secs)
+    val formattedDuration = remember(call.durationSeconds, call.status, call.direction) {
+        when {
+            call.status == CallRecordStatus.NO_ANSWER -> "No Answer"
+            call.status == CallRecordStatus.BUSY -> "Busy"
+            call.status == CallRecordStatus.FAILED -> "Failed"
+            call.direction == CallDirection.MISSED || (call.durationSeconds == 0L && call.direction == CallDirection.INCOMING) -> "Missed"
+            call.durationSeconds == 0L -> "Unanswered"
+            else -> {
+                val mins = call.durationSeconds / 60
+                val secs = call.durationSeconds % 60
+                String.format(Locale.getDefault(), "%02d:%02d", mins, secs)
+            }
         }
     }
 

@@ -17,6 +17,19 @@ import kotlinx.coroutines.*
 import java.util.UUID
 
 /**
+ * Structured disconnect/failure information with clean, user-friendly messages.
+ */
+data class DisconnectReason(
+    val title: String,
+    val userFriendlyMessage: String,
+    val isNoAnswer: Boolean = false,
+    val isBusy: Boolean = false,
+    val isRejected: Boolean = false,
+    val isNormalHangup: Boolean = false,
+    val rawErrorCode: Int? = null
+)
+
+/**
  * Real Twilio Voice Android SDK VoIP Manager.
  * 
  * Complies with Twilio Voice Architecture:
@@ -50,7 +63,9 @@ class TwilioVoiceClientManager(
         val clientIdentity: String,
         val toPhoneNumber: String,
         val call: Call? = null,
-        val startTime: Long = System.currentTimeMillis()
+        val startTime: Long = System.currentTimeMillis(),
+        var hasRung: Boolean = false,
+        var hasConnected: Boolean = false
     )
 
     private var activeSession: VoiceSession? = null
@@ -62,8 +77,8 @@ class TwilioVoiceClientManager(
         fun onRinging(sessionId: String)
         fun onConnected(sessionId: String)
         fun onReconnecting(sessionId: String)
-        fun onDisconnected(sessionId: String, durationSeconds: Long)
-        fun onConnectFailure(sessionId: String, errorMessage: String)
+        fun onDisconnected(sessionId: String, durationSeconds: Long, reason: DisconnectReason)
+        fun onConnectFailure(sessionId: String, reason: DisconnectReason)
     }
 
     private var eventListener: CallEventListener? = null
@@ -93,8 +108,127 @@ class TwilioVoiceClientManager(
     }
 
     /**
+     * Maps Twilio SDK exceptions and disconnect events to user-friendly messages.
+     */
+    private fun resolveDisconnectReason(
+        error: CallException?,
+        wasRinging: Boolean,
+        wasConnected: Boolean,
+        durationSeconds: Long
+    ): DisconnectReason {
+        if (error == null) {
+            return when {
+                durationSeconds > 0 || wasConnected -> DisconnectReason(
+                    title = "Call Ended",
+                    userFriendlyMessage = "Call completed",
+                    isNormalHangup = true
+                )
+                wasRinging -> DisconnectReason(
+                    title = "No Answer",
+                    userFriendlyMessage = "The recipient did not answer the call.",
+                    isNoAnswer = true
+                )
+                else -> DisconnectReason(
+                    title = "Call Ended",
+                    userFriendlyMessage = "Call was ended.",
+                    isNormalHangup = true
+                )
+            }
+        }
+
+        val code = error.errorCode
+        val msg = (error.message ?: "").lowercase()
+        val exp = (error.explanation ?: "").lowercase()
+
+        return when {
+            // No Answer / Timeout
+            code == 31603 || msg.contains("no answer") || msg.contains("no-answer") || exp.contains("no answer") || exp.contains("timeout") -> {
+                DisconnectReason(
+                    title = "No Answer",
+                    userFriendlyMessage = "The recipient did not answer the call.",
+                    isNoAnswer = true,
+                    rawErrorCode = code
+                )
+            }
+            // Line Busy
+            code == 31486 || (code == 31600 && (msg.contains("busy") || exp.contains("busy"))) || msg.contains("busy") || exp.contains("busy") -> {
+                DisconnectReason(
+                    title = "Line Busy",
+                    userFriendlyMessage = "The recipient is currently on another call. Please try again in a few moments.",
+                    isBusy = true,
+                    rawErrorCode = code
+                )
+            }
+            // Rejected / Declined / Canceled
+            code in listOf(31601, 31602, 31487) || msg.contains("decline") || msg.contains("reject") || exp.contains("decline") || exp.contains("reject") -> {
+                DisconnectReason(
+                    title = "Call Declined",
+                    userFriendlyMessage = "The call was declined by the recipient.",
+                    isRejected = true,
+                    rawErrorCode = code
+                )
+            }
+            // Invalid destination number / unallocated
+            code in listOf(21211, 21214, 21217, 21219) || msg.contains("invalid number") || msg.contains("unallocated") || exp.contains("invalid number") -> {
+                DisconnectReason(
+                    title = "Invalid Number",
+                    userFriendlyMessage = "The destination phone number is invalid. Please check the country code and digits.",
+                    rawErrorCode = code
+                )
+            }
+            // Geographic / International permission restrictions
+            code in listOf(21408, 21421, 21422, 21401) || msg.contains("permission") || msg.contains("geo") || msg.contains("international") || exp.contains("permission") -> {
+                DisconnectReason(
+                    title = "Calling Restricted",
+                    userFriendlyMessage = "Outbound calling to this destination country is restricted on your account.",
+                    rawErrorCode = code
+                )
+            }
+            // Insufficient funds / VoIP balance
+            code in listOf(21210, 21212, 21614, 20003) || msg.contains("balance") || msg.contains("credit") || msg.contains("funds") || exp.contains("balance") -> {
+                DisconnectReason(
+                    title = "Insufficient Credits",
+                    userFriendlyMessage = "Your account has insufficient balance to complete this call. Please recharge your credits.",
+                    rawErrorCode = code
+                )
+            }
+            // Auth token expiration / session invalid
+            code in listOf(20101, 20104, 31201, 31204, 31205) || msg.contains("token") || msg.contains("jwt") || msg.contains("auth") -> {
+                DisconnectReason(
+                    title = "Session Expired",
+                    userFriendlyMessage = "Your voice authorization token has expired. Please place the call again.",
+                    rawErrorCode = code
+                )
+            }
+            // Network / carrier unreachable
+            code in listOf(31480, 31000, 31005, 31206, 31207) || msg.contains("network") || msg.contains("unavailable") || exp.contains("network") -> {
+                DisconnectReason(
+                    title = "Network Unavailable",
+                    userFriendlyMessage = "Unable to connect to the telecommunications network. Please check your internet connection.",
+                    rawErrorCode = code
+                )
+            }
+            // Fallback: If it was ringing and duration is 0, it's a No Answer
+            wasRinging && durationSeconds == 0L -> {
+                DisconnectReason(
+                    title = "No Answer",
+                    userFriendlyMessage = "The recipient did not answer the call.",
+                    isNoAnswer = true,
+                    rawErrorCode = code
+                )
+            }
+            else -> {
+                DisconnectReason(
+                    title = "Call Ended",
+                    userFriendlyMessage = "Unable to complete the call. Please verify the number and try again.",
+                    rawErrorCode = code
+                )
+            }
+        }
+    }
+
+    /**
      * Retrieves or refreshes the Twilio Voice Access/Capability Token from the backend API.
-     * Sent with the user's `authToken` header via repository.
      */
     suspend fun getOrFetchAccessToken(forceRefresh: Boolean = false): Result<CapabilityTokenDto> {
         if (!forceRefresh && isTokenValid() && cachedTokenDto != null) {
@@ -116,9 +250,6 @@ class TwilioVoiceClientManager(
 
     /**
      * Originates an outbound call using the real Twilio Voice SDK.
-     * 
-     * Passes destination as custom parameter `To`.
-     * Does NOT pass `From` parameter (backend derives caller ID).
      */
     fun connectOutbound(toPhoneNumber: String, onResult: (Result<String>) -> Unit) {
         val cleanDestination = toPhoneNumber.trim()
@@ -127,14 +258,14 @@ class TwilioVoiceClientManager(
             return
         }
 
-        // Task 5: Verify runtime microphone permission BEFORE calling Voice.connect()
+        // Verify runtime microphone permission BEFORE calling Voice.connect()
         val hasMicPermission = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
 
         if (!hasMicPermission) {
-            val err = "Microphone permission (RECORD_AUDIO) is required to place calls."
+            val err = "Microphone permission is required to place calls."
             Log.e(TAG, "connectOutbound aborted: $err")
             onResult(Result.failure(SecurityException(err)))
             return
@@ -168,22 +299,32 @@ class TwilioVoiceClientManager(
                 val callListener = object : Call.Listener {
                     override fun onConnectFailure(call: Call, error: CallException) {
                         Log.e(TAG, "Twilio Call.Listener onConnectFailure: code=${error.errorCode}, message=${error.message}, explanation=${error.explanation}")
+                        val session = activeSession
+                        val wasRinging = session?.hasRung == true
+                        val wasConnected = session?.hasConnected == true
+                        
                         stopAudioRouting()
                         activeTwilioCall = null
                         activeSession = null
 
-                        val explanation = error.explanation?.ifBlank { null } ?: "Unknown Twilio Voice error"
-                        val formattedError = "Call failed (Error ${error.errorCode}: ${error.message ?: explanation})"
-                        eventListener?.onConnectFailure(sessionId, formattedError)
+                        val reason = resolveDisconnectReason(
+                            error = error,
+                            wasRinging = wasRinging,
+                            wasConnected = wasConnected,
+                            durationSeconds = 0L
+                        )
+                        eventListener?.onConnectFailure(sessionId, reason)
                     }
 
                     override fun onRinging(call: Call) {
                         Log.i(TAG, "Twilio Call.Listener onRinging: callSid=${call.sid}")
+                        activeSession?.hasRung = true
                         eventListener?.onRinging(sessionId)
                     }
 
                     override fun onConnected(call: Call) {
                         Log.i(TAG, "Twilio Call.Listener onConnected: callSid=${call.sid}, from=${call.from}, to=${call.to}")
+                        activeSession?.hasConnected = true
                         activeSession = activeSession?.copy(startTime = System.currentTimeMillis())
                         eventListener?.onConnected(sessionId)
                     }
@@ -204,11 +345,23 @@ class TwilioVoiceClientManager(
                         } else {
                             Log.i(TAG, "Twilio Call.Listener onDisconnected: callSid=${call.sid}")
                         }
-                        val duration = activeSession?.let { (System.currentTimeMillis() - it.startTime) / 1000 } ?: 0L
+                        
+                        val session = activeSession
+                        val duration = session?.let { (System.currentTimeMillis() - it.startTime) / 1000 } ?: 0L
+                        val wasRinging = session?.hasRung == true
+                        val wasConnected = session?.hasConnected == true
+
                         stopAudioRouting()
                         activeTwilioCall = null
                         activeSession = null
-                        eventListener?.onDisconnected(sessionId, duration)
+
+                        val reason = resolveDisconnectReason(
+                            error = error,
+                            wasRinging = wasRinging,
+                            wasConnected = wasConnected,
+                            durationSeconds = duration
+                        )
+                        eventListener?.onDisconnected(sessionId, duration, reason)
                     }
                 }
 
@@ -234,7 +387,13 @@ class TwilioVoiceClientManager(
                 activeTwilioCall = null
                 activeSession = null
                 onResult(Result.failure(e))
-                eventListener?.onConnectFailure("client_call_init", e.message ?: "Failed to initialize call")
+                eventListener?.onConnectFailure(
+                    "client_call_init",
+                    DisconnectReason(
+                        title = "Call Ended",
+                        userFriendlyMessage = e.message ?: "Unable to establish VoIP connection."
+                    )
+                )
             }
         }
     }
@@ -255,7 +414,12 @@ class TwilioVoiceClientManager(
         activeSession = null
         if (session != null) {
             val duration = (System.currentTimeMillis() - session.startTime) / 1000
-            eventListener?.onDisconnected(session.sessionId, maxOf(0L, duration))
+            val reason = if (duration > 0 || session.hasConnected) {
+                DisconnectReason(title = "Call Ended", userFriendlyMessage = "Call ended", isNormalHangup = true)
+            } else {
+                DisconnectReason(title = "Call Canceled", userFriendlyMessage = "Call was canceled", isNormalHangup = true)
+            }
+            eventListener?.onDisconnected(session.sessionId, maxOf(0L, duration), reason)
         }
     }
 

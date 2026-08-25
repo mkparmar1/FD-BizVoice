@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Button
@@ -29,7 +28,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -49,7 +47,6 @@ import com.example.data.repository.BizVoiceRepository
 import com.example.ui.components.BizTopAppBar
 import com.example.ui.theme.CallGreen
 import com.example.ui.theme.CallGreenContainer
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -59,7 +56,6 @@ fun BackendConfigScreen(
     onNavigateBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var useMock by remember { mutableStateOf(sessionManager.useMockBackend) }
     var apiUrl by remember { mutableStateOf(sessionManager.baseApiUrl) }
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
@@ -96,51 +92,9 @@ fun BackendConfigScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-            // Sandbox Mode Toggle Card (Only enabled in DEBUG builds)
-            if (com.example.BuildConfig.DEBUG) {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(18.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Sandbox Simulation Engine (DEBUG ONLY)",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Simulates Laravel API responses & Twilio Voice tokens on-device for standalone testing",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Switch(
-                            checked = useMock,
-                            onCheckedChange = {
-                                useMock = it
-                                sessionManager.useMockBackend = it
-                                testResult = null
-                            },
-                            modifier = Modifier.testTag("mock_backend_switch")
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(20.dp))
-            }
-
-            // Live URL Section (Only if mock is off or to configure)
+            // Live URL Section
             Text(
                 text = "LARAVEL API ENDPOINT",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
@@ -156,10 +110,9 @@ fun BackendConfigScreen(
                     testResult = null
                 },
                 label = { Text("Base API URL") },
-                placeholder = { Text("https://api.yourcompany.com/api/") },
+                placeholder = { Text("https://api.yourcompany.com/api/v1.0") },
                 leadingIcon = { Icon(Icons.Default.Dns, contentDescription = null) },
                 singleLine = true,
-                enabled = !useMock,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("api_url_input"),
@@ -207,19 +160,13 @@ fun BackendConfigScreen(
                     testResult = null
                     scope.launch {
                         sessionManager.baseApiUrl = apiUrl.trim()
-                        if (useMock) {
-                            delay(600)
+                        val res = repository.getTwilioToken(forceRefresh = true)
+                        if (res.isSuccess) {
                             isSuccess = true
-                            testResult = "Sandbox simulation backend active and responding normally."
+                            testResult = "Successfully authenticated with Laravel API and received Twilio Voice token."
                         } else {
-                            val res = repository.getTwilioToken()
-                            if (res.isSuccess) {
-                                isSuccess = true
-                                testResult = "Successfully authenticated with Laravel API and received Twilio Voice token."
-                            } else {
-                                isSuccess = false
-                                testResult = "Unable to connect: ${res.exceptionOrNull()?.message ?: "Server unreachable"}"
-                            }
+                            isSuccess = false
+                            testResult = "Unable to connect: ${res.exceptionOrNull()?.message ?: "Server unreachable"}"
                         }
                         isTesting = false
                     }

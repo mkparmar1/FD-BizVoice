@@ -10,6 +10,9 @@ enum class CallState {
     CONNECTED,
     ON_HOLD,
     RECONNECTING,
+    NO_ANSWER,
+    BUSY,
+    REJECTED,
     ENDING,
     ENDED,
     FAILED
@@ -29,5 +32,7 @@ data class ActiveCallInfo(
     val recordingDurationSeconds: Long = 0,
     val dtmfLog: String = "",
     val errorMessage: String? = null,
+    val statusTitle: String? = null,
+    val statusSubtitle: String? = null,
     val startTime: Long = 0
 )

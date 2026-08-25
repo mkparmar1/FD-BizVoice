@@ -482,10 +482,7 @@ fun ProfileScreen(
     if (showEditDialog && currentUser != null) {
         val user = currentUser!!
         var editName by remember { mutableStateOf(user.name) }
-        var editEmail by remember { mutableStateOf(user.email) }
-        var editCompany by remember { mutableStateOf(user.company ?: "") }
         var editRole by remember { mutableStateOf(user.role ?: "") }
-        var editPhone by remember { mutableStateOf(user.assignedPhoneNumber ?: "") }
         var dialogError by remember { mutableStateOf<String?>(null) }
 
         AlertDialog(
@@ -511,6 +508,7 @@ fun ProfileScreen(
                         )
                     }
 
+                    // 1. Full Name (Editable)
                     OutlinedTextField(
                         value = editName,
                         onValueChange = { editName = it; dialogError = null },
@@ -523,27 +521,14 @@ fun ProfileScreen(
                         shape = RoundedCornerShape(12.dp)
                     )
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    OutlinedTextField(
-                        value = editEmail,
-                        onValueChange = { editEmail = it; dialogError = null },
-                        label = { Text("Work Email *") },
-                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("edit_email_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
+                    // 2. Job Role (Editable)
                     OutlinedTextField(
                         value = editRole,
                         onValueChange = { editRole = it },
                         label = { Text("Job Role / Title") },
-                        placeholder = { Text("Account Executive, Support, etc.") },
+                        placeholder = { Text("e.g. Sales Executive, Support Agent") },
                         leadingIcon = { Icon(Icons.Default.Work, contentDescription = null) },
                         singleLine = true,
                         modifier = Modifier
@@ -552,29 +537,37 @@ fun ProfileScreen(
                         shape = RoundedCornerShape(12.dp)
                     )
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
+                    // 3. Work Email (Disabled / Read-only)
                     OutlinedTextField(
-                        value = editCompany,
-                        onValueChange = { editCompany = it },
-                        label = { Text("Company / Organization") },
-                        placeholder = { Text("Company Name") },
-                        leadingIcon = { Icon(Icons.Default.Business, contentDescription = null) },
+                        value = user.email,
+                        onValueChange = {},
+                        enabled = false,
+                        readOnly = true,
+                        label = { Text("Work Email") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                        trailingIcon = { Icon(Icons.Default.Lock, contentDescription = "Locked", modifier = Modifier.size(18.dp)) },
+                        supportingText = { Text("Email is managed by your administrator.") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("edit_company_input"),
+                            .testTag("edit_email_input"),
                         shape = RoundedCornerShape(12.dp)
                     )
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
+                    // 4. Assigned Phone / Line (Disabled / Read-only)
                     OutlinedTextField(
-                        value = editPhone,
-                        onValueChange = { editPhone = it },
+                        value = user.assignedPhoneNumber ?: "No line assigned",
+                        onValueChange = {},
+                        enabled = false,
+                        readOnly = true,
                         label = { Text("Assigned Phone / Line") },
-                        placeholder = { Text("+1 (555) 000-0000") },
                         leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                        trailingIcon = { Icon(Icons.Default.Lock, contentDescription = "Locked", modifier = Modifier.size(18.dp)) },
+                        supportingText = { Text("VoIP line assigned by system admin.") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -586,17 +579,17 @@ fun ProfileScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (editName.isBlank() || editEmail.isBlank()) {
-                            dialogError = "Name and Email are required"
+                        if (editName.isBlank()) {
+                            dialogError = "Full Name cannot be empty"
                             return@Button
                         }
                         isSaving = true
                         scope.launch {
                             val res = repository.updateProfile(
                                 name = editName.trim(),
-                                email = editEmail.trim(),
-                                assignedPhoneNumber = editPhone.trim().ifBlank { null },
-                                company = editCompany.trim().ifBlank { null },
+                                email = user.email,
+                                assignedPhoneNumber = user.assignedPhoneNumber,
+                                company = user.company,
                                 role = editRole.trim().ifBlank { null },
                                 status = user.status
                             )

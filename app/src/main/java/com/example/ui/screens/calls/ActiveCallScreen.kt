@@ -9,7 +9,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,12 +25,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PhoneCallback
+import androidx.compose.material.icons.filled.PhoneLocked
+import androidx.compose.material.icons.filled.PhoneMissed
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeUp
@@ -68,6 +73,7 @@ import androidx.compose.ui.unit.sp
 import com.example.telephony.CallManager
 import com.example.telephony.CallState
 import com.example.ui.components.BizAvatar
+import com.example.ui.theme.CallGreen
 import com.example.ui.theme.CallHoldAmber
 import com.example.ui.theme.CallRed
 import java.util.Locale
@@ -97,17 +103,46 @@ fun ActiveCallScreen(
         String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
     }
 
+    val isTerminalState = when (activeCall.state) {
+        CallState.NO_ANSWER,
+        CallState.BUSY,
+        CallState.REJECTED,
+        CallState.FAILED,
+        CallState.ENDED,
+        CallState.ENDING -> true
+        else -> false
+    }
+
     val stateLabel = when (activeCall.state) {
         CallState.PREPARING -> "Authorizing VoIP Line..."
         CallState.CALLING -> "Calling..."
         CallState.RINGING -> "Ringing..."
         CallState.CONNECTED -> formattedDuration
         CallState.ON_HOLD -> "Call On Hold"
-        CallState.RECONNECTING -> "Reconnecting..."
+        CallState.RECONNECTING -> "Reconnecting VoIP..."
+        CallState.NO_ANSWER -> "No Answer"
+        CallState.BUSY -> "Line Busy"
+        CallState.REJECTED -> "Call Declined"
         CallState.ENDING -> "Ending Call..."
-        CallState.ENDED -> "Call Ended"
-        CallState.FAILED -> "Call Failed"
+        CallState.ENDED -> if (activeCall.durationSeconds > 0) "Call Ended ($formattedDuration)" else "Call Ended"
+        CallState.FAILED -> activeCall.statusTitle ?: "Unable to Connect"
         CallState.IDLE -> ""
+    }
+
+    val pillColor = when (activeCall.state) {
+        CallState.ON_HOLD -> CallHoldAmber.copy(alpha = 0.25f)
+        CallState.NO_ANSWER, CallState.BUSY, CallState.REJECTED -> Color(0xFFF59E0B).copy(alpha = 0.25f)
+        CallState.FAILED -> CallRed.copy(alpha = 0.3f)
+        CallState.ENDED -> Color.White.copy(alpha = 0.15f)
+        else -> Color(0xFF0284C7).copy(alpha = 0.25f)
+    }
+
+    val pillTextColor = when (activeCall.state) {
+        CallState.ON_HOLD -> Color(0xFFFCD34D)
+        CallState.NO_ANSWER, CallState.BUSY, CallState.REJECTED -> Color(0xFFFDE68A)
+        CallState.FAILED -> Color(0xFFFCA5A5)
+        CallState.ENDED -> Color.White.copy(alpha = 0.9f)
+        else -> Color(0xFF38BDF8)
     }
 
     Box(
@@ -177,28 +212,20 @@ fun ActiveCallScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Call State / Duration Pill
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = when (activeCall.state) {
-                        CallState.ON_HOLD -> CallHoldAmber.copy(alpha = 0.3f)
-                        CallState.FAILED -> CallRed.copy(alpha = 0.3f)
-                        else -> Color.White.copy(alpha = 0.15f)
-                    },
+                    color = pillColor,
                     modifier = Modifier.padding(top = 4.dp)
                 ) {
                     Text(
                         text = stateLabel,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = when (activeCall.state) {
-                            CallState.ON_HOLD -> Color(0xFFFCD34D)
-                            CallState.FAILED -> Color(0xFFFCA5A5)
-                            else -> Color(0xFF38BDF8)
-                        },
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        color = pillTextColor,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
                 }
 
@@ -247,40 +274,130 @@ fun ActiveCallScreen(
                 }
             }
 
-            // Error Recovery Options (If Call Failed)
-            if (activeCall.state == CallState.FAILED) {
+            // Middle Section: Status / Feedback Card OR Softphone Controls
+            if (isTerminalState) {
+                // User-Friendly Outcome Feedback Card
+                val statusCardIcon = when (activeCall.state) {
+                    CallState.NO_ANSWER -> Icons.Default.PhoneMissed
+                    CallState.BUSY -> Icons.Default.PhoneLocked
+                    CallState.REJECTED -> Icons.Default.CallEnd
+                    CallState.FAILED -> Icons.Default.Info
+                    else -> Icons.Default.PhoneCallback
+                }
+
+                val statusCardTitle = activeCall.statusTitle ?: when (activeCall.state) {
+                    CallState.NO_ANSWER -> "No Answer"
+                    CallState.BUSY -> "Line Busy"
+                    CallState.REJECTED -> "Call Declined"
+                    CallState.FAILED -> "Call Failed"
+                    else -> "Call Ended"
+                }
+
+                val statusCardMessage = activeCall.statusSubtitle ?: activeCall.errorMessage ?: when (activeCall.state) {
+                    CallState.NO_ANSWER -> "The recipient did not answer the call."
+                    CallState.BUSY -> "The recipient is currently on another call. Please try again later."
+                    CallState.REJECTED -> "The call was declined by the recipient."
+                    CallState.FAILED -> "Unable to complete VoIP connection. Please try again."
+                    else -> if (activeCall.durationSeconds > 0) "Call completed ($formattedDuration)" else "Call was ended."
+                }
+
+                val cardBgColor = when (activeCall.state) {
+                    CallState.FAILED -> Color(0xFF3B1219)
+                    CallState.NO_ANSWER, CallState.BUSY, CallState.REJECTED -> Color(0xFF2C2213)
+                    else -> Color(0xFF1E293B)
+                }
+
+                val cardBorderColor = when (activeCall.state) {
+                    CallState.FAILED -> Color(0xFFEF4444).copy(alpha = 0.4f)
+                    CallState.NO_ANSWER, CallState.BUSY, CallState.REJECTED -> Color(0xFFF59E0B).copy(alpha = 0.4f)
+                    else -> Color(0xFF475569).copy(alpha = 0.4f)
+                }
+
+                val iconTint = when (activeCall.state) {
+                    CallState.FAILED -> Color(0xFFF87171)
+                    CallState.NO_ANSWER, CallState.BUSY, CallState.REJECTED -> Color(0xFFFBBF24)
+                    else -> Color(0xFF94A3B8)
+                }
+
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF7F1D1D)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    colors = CardDefaults.cardColors(containerColor = cardBgColor),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, cardBorderColor),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                        .testTag("call_outcome_card")
                 ) {
                     Column(
-                        modifier = Modifier.padding(16.dp),
+                        modifier = Modifier.padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = iconTint.copy(alpha = 0.15f),
+                            modifier = Modifier.size(52.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = statusCardIcon,
+                                    contentDescription = null,
+                                    tint = iconTint,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
                         Text(
-                            text = activeCall.errorMessage ?: "Unable to connect the call.",
+                            text = statusCardTitle,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = Color.White,
-                            fontSize = 14.sp,
                             textAlign = TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = statusCardMessage,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(18.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
                             OutlinedButton(
                                 onClick = { callManager.resetToIdle() },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .testTag("dismiss_call_outcome_button")
                             ) {
+                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text("Close")
                             }
+
                             Button(
-                                onClick = {
-                                    val phone = activeCall.remotePhoneNumber
-                                    val name = activeCall.remoteName
-                                    callManager.startOutgoingCall(phone, name)
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                onClick = { callManager.retryLastCall() },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = CallGreen),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp)
+                                    .testTag("retry_call_outcome_button")
                             ) {
-                                Text("Try Again")
+                                Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Call Again", fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
@@ -345,24 +462,29 @@ fun ActiveCallScreen(
                 }
             }
 
-            // Bottom End Call Button
-            Surface(
-                onClick = { callManager.endCall() },
-                shape = CircleShape,
-                color = CallRed,
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .size(72.dp)
-                    .testTag("end_call_button")
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.CallEnd,
-                        contentDescription = "End Call",
-                        tint = Color.White,
-                        modifier = Modifier.size(36.dp)
-                    )
+            // Bottom End Call / Close Button
+            if (!isTerminalState) {
+                Surface(
+                    onClick = { callManager.endActiveCall() },
+                    shape = CircleShape,
+                    color = CallRed,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier
+                        .size(72.dp)
+                        .testTag("end_call_button")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.CallEnd,
+                            contentDescription = "End Call",
+                            tint = Color.White,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
                 }
+            } else {
+                // Subtle spacer when in terminal state (buttons are on card)
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }

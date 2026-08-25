@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Phone
@@ -67,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.CallDirection
 import com.example.data.model.CallRecord
+import com.example.data.model.CallRecordStatus
 import com.example.data.model.Contact
 import com.example.data.repository.BizVoiceRepository
 import com.example.telephony.CallManager
@@ -256,6 +258,20 @@ fun CallDetailScreen(
                                 CallDirection.INCOMING -> "Incoming Call"
                                 CallDirection.OUTGOING -> "Outgoing Call"
                                 CallDirection.MISSED -> "Missed Call"
+                            }
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+                        DetailRow(
+                            icon = Icons.Default.Info,
+                            label = "Call Status",
+                            value = when (call.status) {
+                                CallRecordStatus.NO_ANSWER -> "No Answer"
+                                CallRecordStatus.BUSY -> "Line Busy"
+                                CallRecordStatus.FAILED -> "Call Failed"
+                                CallRecordStatus.CANCELED -> "Canceled / Declined"
+                                CallRecordStatus.COMPLETED -> "Completed"
                             }
                         )
 

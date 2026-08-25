@@ -60,6 +60,8 @@ class CallManager(
 
     private var timerJob: Job? = null
     private var ringingToneJob: Job? = null
+    private var autoDismissJob: Job? = null
+    private val savedSessionIds = mutableSetOf<String>()
 
     init {
         val prefSpeaker = repository.sessionManager.defaultSpeaker
@@ -72,28 +74,39 @@ class CallManager(
         voiceClientManager.setEventListener(object : TwilioVoiceClientManager.CallEventListener {
             override fun onConnecting(sessionId: String) {
                 Log.i(TAG, "Voice Client Event: Connecting session $sessionId")
+                autoDismissJob?.cancel()
                 _activeCallFlow.value = _activeCallFlow.value.copy(
                     callId = sessionId,
-                    state = CallState.CALLING
+                    state = CallState.CALLING,
+                    statusTitle = "Calling...",
+                    statusSubtitle = null,
+                    errorMessage = null
                 )
                 playKeypadTone('1')
             }
 
             override fun onRinging(sessionId: String) {
                 Log.i(TAG, "Voice Client Event: Ringing session $sessionId")
+                autoDismissJob?.cancel()
                 _activeCallFlow.value = _activeCallFlow.value.copy(
                     callId = sessionId,
-                    state = CallState.RINGING
+                    state = CallState.RINGING,
+                    statusTitle = "Ringing...",
+                    statusSubtitle = null
                 )
                 startOutgoingRingbackLoop()
             }
 
             override fun onConnected(sessionId: String) {
                 Log.i(TAG, "Voice Client Event: Connected session $sessionId")
+                autoDismissJob?.cancel()
                 stopAllRingingAndTones()
                 _activeCallFlow.value = _activeCallFlow.value.copy(
                     callId = sessionId,
                     state = CallState.CONNECTED,
+                    statusTitle = null,
+                    statusSubtitle = null,
+                    errorMessage = null,
                     startTime = System.currentTimeMillis()
                 )
                 startCallTimer()
@@ -101,26 +114,20 @@ class CallManager(
 
             override fun onReconnecting(sessionId: String) {
                 Log.i(TAG, "Voice Client Event: Reconnecting session $sessionId")
-                _activeCallFlow.value = _activeCallFlow.value.copy(state = CallState.RECONNECTING)
-            }
-
-            override fun onDisconnected(sessionId: String, durationSeconds: Long) {
-                Log.i(TAG, "Voice Client Event: Disconnected session $sessionId (duration: ${durationSeconds}s)")
-                handleCallDisconnected(durationSeconds)
-            }
-
-            override fun onConnectFailure(sessionId: String, errorMessage: String) {
-                Log.e(TAG, "Voice Client Event: Connect failure session $sessionId: $errorMessage")
-                stopAllRingingAndTones()
-                playTone(ToneGenerator.TONE_PROP_NACK, 500)
                 _activeCallFlow.value = _activeCallFlow.value.copy(
-                    state = CallState.FAILED,
-                    errorMessage = errorMessage
+                    state = CallState.RECONNECTING,
+                    statusTitle = "Reconnecting VoIP..."
                 )
-                scope.launch {
-                    delay(2500)
-                    resetCallState(CallState.IDLE)
-                }
+            }
+
+            override fun onDisconnected(sessionId: String, durationSeconds: Long, reason: DisconnectReason) {
+                Log.i(TAG, "Voice Client Event: Disconnected session $sessionId (duration: ${durationSeconds}s, reason: ${reason.title} - ${reason.userFriendlyMessage})")
+                handleCallDisconnected(durationSeconds, reason)
+            }
+
+            override fun onConnectFailure(sessionId: String, reason: DisconnectReason) {
+                Log.e(TAG, "Voice Client Event: Connect failure session $sessionId: ${reason.title} - ${reason.userFriendlyMessage}")
+                handleConnectFailure(reason)
             }
         })
     }
@@ -143,8 +150,6 @@ class CallManager(
 
     /**
      * Initiates a client-originated outbound call using the Twilio Voice Client.
-     * The parent leg is client:<identity> and child leg is the customer's phone number.
-     * Rings the customer exactly once and creates bridged two-way audio.
      */
     fun startOutgoingCall(phoneNumber: String, contactName: String? = null): Result<Unit> {
         val cleanNumber = phoneNumber.trim()
@@ -155,11 +160,13 @@ class CallManager(
         // Cancel any pending tones & timer
         stopAllRingingAndTones()
         timerJob?.cancel()
+        autoDismissJob?.cancel()
 
         val initialSpeaker = repository.sessionManager.defaultSpeaker
+        val sessionId = "call_out_" + UUID.randomUUID().toString().substring(0, 8)
 
         _activeCallFlow.value = ActiveCallInfo(
-            callId = "call_init",
+            callId = sessionId,
             remotePhoneNumber = cleanNumber,
             remoteName = contactName,
             direction = CallDirection.OUTGOING,
@@ -169,6 +176,9 @@ class CallManager(
             isSpeaker = initialSpeaker,
             isHold = false,
             dtmfLog = "",
+            statusTitle = "Authorizing VoIP Line...",
+            statusSubtitle = null,
+            errorMessage = null,
             startTime = System.currentTimeMillis()
         )
 
@@ -180,35 +190,53 @@ class CallManager(
             if (result.isFailure) {
                 val errorMsg = result.exceptionOrNull()?.message ?: "Unable to connect call"
                 stopAllRingingAndTones()
-                _activeCallFlow.value = _activeCallFlow.value.copy(
-                    state = CallState.FAILED,
-                    errorMessage = errorMsg
+                val friendlyReason = DisconnectReason(
+                    title = "Unable to Place Call",
+                    userFriendlyMessage = errorMsg
                 )
-                playTone(ToneGenerator.TONE_PROP_NACK, 500)
-                scope.launch {
-                    delay(2500)
-                    resetCallState(CallState.IDLE)
-                }
+                handleConnectFailure(friendlyReason)
             }
         }
 
         return Result.success(Unit)
     }
 
-    private fun handleCallDisconnected(finalDuration: Long) {
+    private fun handleCallDisconnected(finalDuration: Long, reason: DisconnectReason) {
         stopAllRingingAndTones()
         timerJob?.cancel()
+        autoDismissJob?.cancel()
 
         val current = _activeCallFlow.value
-        if (current.state == CallState.IDLE || current.state == CallState.ENDED) return
+        if (current.state == CallState.IDLE) return
 
         val duration = maxOf(current.durationSeconds, finalDuration)
-        val recordStatus = if (duration > 0) CallRecordStatus.COMPLETED else CallRecordStatus.CANCELED
 
-        // Play prompt tone
-        try {
-            primaryToneGen?.startTone(ToneGenerator.TONE_PROP_PROMPT, 400)
-        } catch (_: Exception) {}
+        val (nextState, recordStatus) = when {
+            reason.isNoAnswer -> {
+                playTone(ToneGenerator.TONE_PROP_PROMPT, 300)
+                Pair(CallState.NO_ANSWER, CallRecordStatus.NO_ANSWER)
+            }
+            reason.isBusy -> {
+                playTone(ToneGenerator.TONE_SUP_BUSY, 800)
+                Pair(CallState.BUSY, CallRecordStatus.BUSY)
+            }
+            reason.isRejected -> {
+                playTone(ToneGenerator.TONE_PROP_NACK, 400)
+                Pair(CallState.REJECTED, CallRecordStatus.CANCELED)
+            }
+            duration > 0 -> {
+                playTone(ToneGenerator.TONE_PROP_PROMPT, 300)
+                Pair(CallState.ENDED, CallRecordStatus.COMPLETED)
+            }
+            reason.isNormalHangup -> {
+                playTone(ToneGenerator.TONE_PROP_PROMPT, 300)
+                Pair(CallState.ENDED, CallRecordStatus.CANCELED)
+            }
+            else -> {
+                playTone(ToneGenerator.TONE_PROP_NACK, 400)
+                Pair(CallState.FAILED, CallRecordStatus.FAILED)
+            }
+        }
 
         saveCallRecord(
             status = recordStatus,
@@ -217,12 +245,62 @@ class CallManager(
         )
 
         _activeCallFlow.value = current.copy(
-            state = CallState.ENDED,
-            durationSeconds = duration
+            state = nextState,
+            durationSeconds = duration,
+            statusTitle = reason.title,
+            statusSubtitle = reason.userFriendlyMessage,
+            errorMessage = if (nextState == CallState.FAILED) reason.userFriendlyMessage else null
         )
 
-        scope.launch {
-            delay(1500)
+        // Automatically dismiss the call screen after allowing the user to view the friendly result
+        autoDismissJob = scope.launch {
+            val dismissDelay = when (nextState) {
+                CallState.ENDED -> 1500L
+                CallState.NO_ANSWER, CallState.BUSY, CallState.REJECTED -> 4000L
+                else -> 4500L
+            }
+            delay(dismissDelay)
+            resetCallState(CallState.IDLE)
+        }
+    }
+
+    private fun handleConnectFailure(reason: DisconnectReason) {
+        stopAllRingingAndTones()
+        timerJob?.cancel()
+        autoDismissJob?.cancel()
+
+        val current = _activeCallFlow.value
+        playTone(ToneGenerator.TONE_PROP_NACK, 500)
+
+        val nextState = when {
+            reason.isNoAnswer -> CallState.NO_ANSWER
+            reason.isBusy -> CallState.BUSY
+            reason.isRejected -> CallState.REJECTED
+            else -> CallState.FAILED
+        }
+
+        val recordStatus = when (nextState) {
+            CallState.NO_ANSWER -> CallRecordStatus.NO_ANSWER
+            CallState.BUSY -> CallRecordStatus.BUSY
+            CallState.REJECTED -> CallRecordStatus.CANCELED
+            else -> CallRecordStatus.FAILED
+        }
+
+        saveCallRecord(
+            status = recordStatus,
+            direction = current.direction,
+            duration = 0
+        )
+
+        _activeCallFlow.value = current.copy(
+            state = nextState,
+            statusTitle = reason.title,
+            statusSubtitle = reason.userFriendlyMessage,
+            errorMessage = reason.userFriendlyMessage
+        )
+
+        autoDismissJob = scope.launch {
+            delay(4000)
             resetCallState(CallState.IDLE)
         }
     }
@@ -230,6 +308,7 @@ class CallManager(
     fun triggerIncomingCall(phoneNumber: String, callerName: String? = null) {
         stopAllRingingAndTones()
         timerJob?.cancel()
+        autoDismissJob?.cancel()
 
         val callId = "call_in_" + UUID.randomUUID().toString().substring(0, 8)
         _activeCallFlow.value = ActiveCallInfo(
@@ -243,6 +322,9 @@ class CallManager(
             isSpeaker = repository.sessionManager.defaultSpeaker,
             isHold = false,
             dtmfLog = "",
+            statusTitle = "Incoming Call...",
+            statusSubtitle = null,
+            errorMessage = null,
             startTime = System.currentTimeMillis()
         )
 
@@ -254,82 +336,99 @@ class CallManager(
         if (current.state != CallState.RINGING && current.state != CallState.PREPARING) return
 
         stopAllRingingAndTones()
+        autoDismissJob?.cancel()
 
         _activeCallFlow.value = current.copy(
             state = CallState.CONNECTED,
+            statusTitle = null,
+            statusSubtitle = null,
             startTime = System.currentTimeMillis()
         )
-        voiceClientManager.setSpeakerphoneOn(current.isSpeaker)
-        voiceClientManager.setMuted(current.isMuted)
+
+        try {
+            audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
+            voiceClientManager.setSpeakerphoneOn(current.isSpeaker)
+        } catch (_: Exception) {}
+
         startCallTimer()
     }
 
     fun declineIncomingCall() {
-        stopAllRingingAndTones()
         val current = _activeCallFlow.value
+        stopAllRingingAndTones()
+        autoDismissJob?.cancel()
+
         saveCallRecord(
             status = CallRecordStatus.NO_ANSWER,
             direction = CallDirection.MISSED,
             duration = 0
         )
-        resetCallState(CallState.ENDED)
+
+        _activeCallFlow.value = current.copy(
+            state = CallState.ENDED,
+            statusTitle = "Call Declined",
+            statusSubtitle = null
+        )
+
+        scope.launch {
+            delay(600)
+            resetCallState(CallState.IDLE)
+        }
     }
 
-    fun toggleMute() {
+    fun toggleMute(): Boolean {
         val current = _activeCallFlow.value
         val newMute = !current.isMuted
         _activeCallFlow.value = current.copy(isMuted = newMute)
         voiceClientManager.setMuted(newMute)
+        try {
+            audioManager?.isMicrophoneMute = newMute
+        } catch (_: Exception) {}
+        return newMute
     }
 
-    fun toggleSpeaker() {
+    fun toggleSpeaker(): Boolean {
         val current = _activeCallFlow.value
         val newSpeaker = !current.isSpeaker
         _activeCallFlow.value = current.copy(isSpeaker = newSpeaker)
         voiceClientManager.setSpeakerphoneOn(newSpeaker)
+        return newSpeaker
     }
 
-    fun toggleHold() {
+    fun toggleHold(): Boolean {
         val current = _activeCallFlow.value
-        if (current.state == CallState.CONNECTED) {
-            _activeCallFlow.value = current.copy(isHold = true, state = CallState.ON_HOLD)
-            voiceClientManager.setMuted(true)
-        } else if (current.state == CallState.ON_HOLD) {
-            _activeCallFlow.value = current.copy(isHold = false, state = CallState.CONNECTED)
-            voiceClientManager.setMuted(current.isMuted)
+        val newHold = !current.isHold
+        val newState = if (newHold) CallState.ON_HOLD else CallState.CONNECTED
+        _activeCallFlow.value = current.copy(isHold = newHold, state = newState)
+        voiceClientManager.setMuted(newHold)
+
+        if (newHold) {
+            playTone(ToneGenerator.TONE_SUP_CONFIRM, 200)
+        } else {
+            playTone(ToneGenerator.TONE_SUP_CONFIRM, 200)
         }
+        return newHold
     }
 
-    fun toggleRecording() {
+    fun toggleRecording(): Boolean {
         val current = _activeCallFlow.value
-        if (current.state == CallState.CONNECTED || current.state == CallState.ON_HOLD) {
-            val newRecording = !current.isRecording
-            _activeCallFlow.value = current.copy(isRecording = newRecording)
-            if (newRecording) {
-                playTone(ToneGenerator.TONE_PROP_BEEP2, 200)
-            } else {
-                playTone(ToneGenerator.TONE_PROP_PROMPT, 150)
-            }
+        val newRec = !current.isRecording
+        _activeCallFlow.value = current.copy(isRecording = newRec)
+        if (newRec) {
+            playTone(ToneGenerator.TONE_PROP_BEEP2, 250)
         }
+        return newRec
     }
 
     fun sendDtmf(digit: Char) {
-        val toneType = getDtmfTone(digit)
-        playTone(toneType, 180)
-
         val current = _activeCallFlow.value
-        _activeCallFlow.value = current.copy(
-            dtmfLog = current.dtmfLog + digit
-        )
+        val updatedLog = current.dtmfLog + digit
+        _activeCallFlow.value = current.copy(dtmfLog = updatedLog)
+        playKeypadTone(digit)
     }
 
     fun playKeypadTone(digit: Char) {
-        val toneType = getDtmfTone(digit)
-        playTone(toneType, 140)
-    }
-
-    private fun getDtmfTone(digit: Char): Int {
-        return when (digit) {
+        val toneType = when (digit) {
             '0' -> ToneGenerator.TONE_DTMF_0
             '1' -> ToneGenerator.TONE_DTMF_1
             '2' -> ToneGenerator.TONE_DTMF_2
@@ -344,16 +443,21 @@ class CallManager(
             '#' -> ToneGenerator.TONE_DTMF_P
             else -> ToneGenerator.TONE_PROP_BEEP
         }
+        playTone(toneType, 120)
     }
 
-    fun endCall() {
+    fun endActiveCall() {
         stopAllRingingAndTones()
+        autoDismissJob?.cancel()
         val current = _activeCallFlow.value
         timerJob?.cancel()
 
         if (current.state == CallState.IDLE) return
 
-        _activeCallFlow.value = current.copy(state = CallState.ENDING)
+        _activeCallFlow.value = current.copy(
+            state = CallState.ENDING,
+            statusTitle = "Ending Call..."
+        )
         voiceClientManager.disconnect(current.callId)
 
         saveCallRecord(
@@ -370,9 +474,23 @@ class CallManager(
         }
     }
 
+    fun endCall() = endActiveCall()
+
+    fun retryLastCall() {
+        autoDismissJob?.cancel()
+        val current = _activeCallFlow.value
+        val phone = current.remotePhoneNumber
+        val name = current.remoteName
+        if (phone.isNotBlank()) {
+            resetToIdle()
+            startOutgoingCall(phone, name)
+        }
+    }
+
     fun resetToIdle() {
         stopAllRingingAndTones()
         timerJob?.cancel()
+        autoDismissJob?.cancel()
         voiceClientManager.disconnect()
         _activeCallFlow.value = ActiveCallInfo(state = CallState.IDLE)
         restoreAudioSettings()
@@ -446,16 +564,28 @@ class CallManager(
 
     private fun saveCallRecord(status: CallRecordStatus, direction: CallDirection, duration: Long) {
         val current = _activeCallFlow.value
+        if (current.remotePhoneNumber.isBlank()) return
+
+        val sessionId = current.callId
+        if (sessionId.isNotBlank() && savedSessionIds.contains(sessionId)) {
+            Log.d(TAG, "Call session $sessionId already recorded, skipping duplicate.")
+            return
+        }
+        if (sessionId.isNotBlank()) {
+            savedSessionIds.add(sessionId)
+        }
+
+        val recordId = if (sessionId.isNotBlank()) sessionId else "call_" + UUID.randomUUID().toString().substring(0, 10)
         val hasRecording = current.recordingDurationSeconds > 0 || current.isRecording
         val finalRecordingDuration = if (hasRecording && current.recordingDurationSeconds == 0L) duration else current.recordingDurationSeconds
         val record = CallRecord(
-            id = "call_" + UUID.randomUUID().toString().substring(0, 10),
+            id = recordId,
             remotePhoneNumber = current.remotePhoneNumber,
             remoteName = current.remoteName,
             direction = direction,
             durationSeconds = duration,
             status = status,
-            timestamp = System.currentTimeMillis(),
+            timestamp = if (current.startTime > 0) current.startTime else System.currentTimeMillis(),
             twilioCallSid = null,
             isRecorded = hasRecording,
             recordingDurationSeconds = finalRecordingDuration,

@@ -931,14 +931,17 @@ fun CallLogDto.toCallRecord(index: Int = 0): CallRecord {
         else -> CallRecordStatus.COMPLETED
     }
     val remoteNum = if (direction.equals("inbound", ignoreCase = true)) fromPhoneNumber else toPhoneNumber
+    val timestamp = parseIsoTimestamp(startTime)
+    val rawKey = "${fromPhoneNumber}_${toPhoneNumber}_${startTime}_${direction}_${duration}_${status}"
+    val stableId = "log_" + (rawKey.hashCode().toLong() and 0xFFFFFFFFL).toString(16)
     return CallRecord(
-        id = "log_$index",
+        id = stableId,
         remotePhoneNumber = remoteNum,
         remoteName = null,
         direction = dir,
         durationSeconds = duration,
         status = recordStatus,
-        timestamp = parseIsoTimestamp(startTime),
+        timestamp = timestamp,
         twilioCallSid = null,
         notes = "Status: $status"
     )
