@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -86,9 +87,13 @@ fun RecentsScreen(
     var selectedFilter by remember { mutableStateOf(RecentsFilter.ALL) }
     var searchQuery by remember { mutableStateOf("") }
     var isRefreshing by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        repository.refreshCalls()
+        val result = repository.refreshCalls()
+        if (result.isFailure) {
+            errorMessage = result.exceptionOrNull()?.localizedMessage ?: "Failed to load call logs"
+        }
     }
 
     val filteredCalls = remember(allCalls, selectedFilter, searchQuery) {
@@ -123,8 +128,12 @@ fun RecentsScreen(
             IconButton(
                 onClick = {
                     isRefreshing = true
+                    errorMessage = null
                     scope.launch {
-                        repository.refreshCalls()
+                        val result = repository.refreshCalls(forceRefresh = true)
+                        if (result.isFailure) {
+                            errorMessage = result.exceptionOrNull()?.localizedMessage ?: "Failed to load call logs"
+                        }
                         isRefreshing = false
                     }
                 },
@@ -197,14 +206,93 @@ fun RecentsScreen(
 
         HorizontalDivider(modifier = Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
 
-        // Calls List or Empty State
+        // Optional Error Banner when calls are cached but latest refresh failed
+        if (errorMessage != null && filteredCalls.isNotEmpty()) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = errorMessage ?: "Failed to update call logs",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            isRefreshing = true
+                            errorMessage = null
+                            scope.launch {
+                                val result = repository.refreshCalls(forceRefresh = true)
+                                if (result.isFailure) {
+                                    errorMessage = result.exceptionOrNull()?.localizedMessage ?: "Failed to load call logs"
+                                }
+                                isRefreshing = false
+                            }
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Retry",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Calls List or Empty / Error State
         if (filteredCalls.isEmpty()) {
-            EmptyStateView(
-                icon = Icons.Default.History,
-                title = if (searchQuery.isNotBlank()) "No Matching Calls" else "No Calls Yet",
-                description = if (searchQuery.isNotBlank()) "No records found matching '$searchQuery'" else "Your outgoing, incoming, and missed VoIP calls will appear here.",
-                modifier = Modifier.weight(1f)
-            )
+            if (errorMessage != null) {
+                EmptyStateView(
+                    icon = Icons.Default.ErrorOutline,
+                    title = "Could Not Load History",
+                    description = errorMessage ?: "A parse or network error occurred while loading call logs.",
+                    actionLabel = "Retry",
+                    onActionClick = {
+                        isRefreshing = true
+                        errorMessage = null
+                        scope.launch {
+                            val result = repository.refreshCalls(forceRefresh = true)
+                            if (result.isFailure) {
+                                errorMessage = result.exceptionOrNull()?.localizedMessage ?: "Failed to load call logs"
+                            }
+                            isRefreshing = false
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                EmptyStateView(
+                    icon = Icons.Default.History,
+                    title = if (searchQuery.isNotBlank()) "No Matching Calls" else "No Calls Yet",
+                    description = if (searchQuery.isNotBlank()) "No records found matching '$searchQuery'" else "Your outgoing, incoming, and missed VoIP calls will appear here.",
+                    modifier = Modifier.weight(1f)
+                )
+            }
         } else {
             LazyColumn(
                 modifier = Modifier

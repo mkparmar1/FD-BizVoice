@@ -59,9 +59,6 @@ fun MainContainerScreen(
     val activeCall by appContainer.callManager.activeCallFlow.collectAsState()
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        appContainer.repository.refreshCalls()
-        appContainer.repository.refreshContacts()
-        appContainer.repository.refreshUserData()
         appContainer.repository.refreshAssignedPhoneNumber()
     }
 

@@ -375,13 +375,13 @@ data class GetCallLogsRequest(
 @JsonClass(generateAdapter = true)
 data class CallLogDto(
     @Json(name = "to_phone_number")
-    val toPhoneNumber: String = "",
+    val toPhoneNumber: String? = null,
     @Json(name = "from_phone_number")
-    val fromPhoneNumber: String = "",
-    val startTime: String? = "",
-    val duration: Long = 0,
-    val direction: String = "outbound", // "outbound" | "inbound"
-    val status: String = "completed" // "completed" | "no-answer" | "busy" | "failed" | "canceled"
+    val fromPhoneNumber: String? = null,
+    val startTime: String? = null,
+    val duration: Long? = 0L,
+    val direction: String? = null, // "outbound" | "inbound"
+    val status: String? = null // "completed" | "no-answer" | "busy" | "failed" | "canceled" | "unknown"
 )
 
 // Legacy alias for phone number detail queries
@@ -953,33 +953,44 @@ fun GrowfoneUserDto.toUser(assignedNumber: String? = null): User {
 }
 
 fun CallLogDto.toCallRecord(index: Int = 0): CallRecord {
+    val safeStatus = status?.lowercase()?.trim().orEmpty()
+    val safeDirection = direction?.lowercase()?.trim() ?: "outbound"
+    val safeTo = toPhoneNumber.orEmpty()
+    val safeFrom = fromPhoneNumber.orEmpty()
+    val safeDuration = duration ?: 0L
+
     val dir = when {
-        status.equals("no-answer", ignoreCase = true) && direction.equals("inbound", ignoreCase = true) -> CallDirection.MISSED
-        direction.equals("inbound", ignoreCase = true) -> CallDirection.INCOMING
+        safeStatus == "no-answer" && safeDirection == "inbound" -> CallDirection.MISSED
+        safeDirection == "inbound" -> CallDirection.INCOMING
         else -> CallDirection.OUTGOING
     }
-    val recordStatus = when (status.lowercase()) {
+    val recordStatus = when (safeStatus) {
         "completed", "answered" -> CallRecordStatus.COMPLETED
         "busy" -> CallRecordStatus.BUSY
         "no-answer" -> CallRecordStatus.NO_ANSWER
-        "failed" -> CallRecordStatus.FAILED
-        "canceled" -> CallRecordStatus.CANCELED
+        "failed", "unknown" -> CallRecordStatus.FAILED
+        "canceled", "cancelled" -> CallRecordStatus.CANCELED
+        "" -> CallRecordStatus.FAILED
         else -> CallRecordStatus.COMPLETED
     }
-    val remoteNum = if (direction.equals("inbound", ignoreCase = true)) fromPhoneNumber else toPhoneNumber
+    val remoteNum = if (safeDirection == "inbound") {
+        if (safeFrom.isNotBlank()) safeFrom else safeTo
+    } else {
+        if (safeTo.isNotBlank()) safeTo else safeFrom
+    }
     val timestamp = parseIsoTimestamp(startTime)
-    val rawKey = "${fromPhoneNumber}_${toPhoneNumber}_${startTime}_${direction}_${duration}_${status}"
+    val rawKey = "${safeFrom}_${safeTo}_${startTime}_${safeDirection}_${safeDuration}_${safeStatus}_$index"
     val stableId = "log_" + (rawKey.hashCode().toLong() and 0xFFFFFFFFL).toString(16)
     return CallRecord(
         id = stableId,
         remotePhoneNumber = remoteNum,
         remoteName = null,
         direction = dir,
-        durationSeconds = duration,
+        durationSeconds = safeDuration,
         status = recordStatus,
         timestamp = timestamp,
         twilioCallSid = null,
-        notes = "Status: $status"
+        notes = if (safeStatus.isNotBlank()) "Status: $safeStatus" else null
     )
 }
 

@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.util.Log
 import com.example.data.local.BizVoiceDatabase
 import com.example.data.local.CallRecordEntity
 import com.example.data.local.ContactEntity
@@ -23,6 +24,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -103,14 +106,19 @@ class BizVoiceRepository(
             initialValue = emptyList()
         )
 
+    // Mutexes and timestamps for request deduplication
+    private val refreshCallsMutex = Mutex()
+    private var lastCallsFetchTime: Long = 0L
+
+    private val refreshContactsMutex = Mutex()
+    private var lastContactsFetchTime: Long = 0L
+
+    private val refreshUserDataMutex = Mutex()
+    private var lastUserDataFetchTime: Long = 0L
+
     init {
         repositoryScope.launch {
             refreshDialingCountries()
-            if (sessionManager.isLoggedIn()) {
-                refreshCalls()
-                refreshContacts()
-                refreshUserData()
-            }
         }
     }
 
@@ -209,18 +217,29 @@ class BizVoiceRepository(
     // 2. PROFILE & CREDITS
     // ==========================================
 
-    suspend fun refreshUserData(): Result<User> = withContext(Dispatchers.IO) {
-        try {
-            val res = apiClient.getService().getProfile()
-            if (res.isSuccessful && res.body()?.data != null) {
-                val user = res.body()!!.data!!.toUser()
-                sessionManager.updateFullProfile(user)
-                Result.success(user)
-            } else {
-                Result.failure(Exception("Failed to fetch user profile"))
+    suspend fun refreshUserData(forceRefresh: Boolean = false): Result<User> = withContext(Dispatchers.IO) {
+        refreshUserDataMutex.withLock {
+            val now = System.currentTimeMillis()
+            val current = sessionManager.getCurrentUser()
+            if (!forceRefresh && current != null && (now - lastUserDataFetchTime) < 2000L) {
+                return@withContext Result.success(current)
             }
-        } catch (e: Exception) {
-            Result.failure(e)
+            try {
+                val res = apiClient.getService().getProfile()
+                if (res.isSuccessful && res.body()?.data != null) {
+                    val user = res.body()!!.data!!.toUser()
+                    sessionManager.updateFullProfile(user)
+                    lastUserDataFetchTime = System.currentTimeMillis()
+                    Result.success(user)
+                } else {
+                    val errorMsg = res.errorBody()?.string() ?: "Failed to fetch user profile (HTTP ${res.code()})"
+                    Log.e("BizVoiceRepository", "getProfile failed: $errorMsg")
+                    Result.failure(Exception(errorMsg))
+                }
+            } catch (e: Exception) {
+                Log.e("BizVoiceRepository", "getProfile exception: ${e.message}", e)
+                Result.failure(e)
+            }
         }
     }
 
@@ -385,27 +404,36 @@ class BizVoiceRepository(
     // 4. CALLS & RECENTS
     // ==========================================
 
-    suspend fun refreshCalls(search: String? = null): Result<List<CallRecord>> = withContext(Dispatchers.IO) {
-        try {
-            val currentNum = sessionManager.getCurrentUser()?.assignedPhoneNumber ?: "+15416342748"
-            val res = apiClient.getService().getCallLogs(
-                authToken = sessionManager.getDeviceAuthKey(),
-                req = GetCallLogsRequest(twilioNumber = currentNum)
-            )
-            val calls: List<CallRecord> = if (res.isSuccessful && res.body() != null) {
-                val list = res.body()!!.data ?: emptyList()
-                list.map { it.toCallRecord() }
-            } else {
-                allCallsFlow.value
+    suspend fun refreshCalls(forceRefresh: Boolean = false, search: String? = null): Result<List<CallRecord>> = withContext(Dispatchers.IO) {
+        refreshCallsMutex.withLock {
+            val now = System.currentTimeMillis()
+            if (!forceRefresh && search == null && (now - lastCallsFetchTime) < 2000L && allCallsFlow.value.isNotEmpty()) {
+                return@withContext Result.success(allCallsFlow.value)
             }
-
-            if (calls.isNotEmpty()) {
-                val entities = calls.map { CallRecordEntity.fromCallRecord(it) }
-                callRecordDao.insertAllCalls(entities)
+            try {
+                val currentNum = sessionManager.getCurrentUser()?.assignedPhoneNumber ?: "+15416342748"
+                val res = apiClient.getService().getCallLogs(
+                    authToken = sessionManager.getDeviceAuthKey(),
+                    req = GetCallLogsRequest(twilioNumber = currentNum)
+                )
+                if (res.isSuccessful && res.body() != null) {
+                    val list = res.body()!!.data ?: emptyList()
+                    val calls: List<CallRecord> = list.mapIndexed { idx, dto -> dto.toCallRecord(idx) }
+                    if (calls.isNotEmpty()) {
+                        val entities = calls.map { CallRecordEntity.fromCallRecord(it) }
+                        callRecordDao.insertAllCalls(entities)
+                    }
+                    lastCallsFetchTime = System.currentTimeMillis()
+                    Result.success(calls)
+                } else {
+                    val errorMsg = res.errorBody()?.string() ?: "Failed to fetch call logs (HTTP ${res.code()})"
+                    Log.e("BizVoiceRepository", "getCallLogs failed: $errorMsg")
+                    Result.failure(Exception(errorMsg))
+                }
+            } catch (e: Exception) {
+                Log.e("BizVoiceRepository", "getCallLogs exception: ${e.message}", e)
+                Result.failure(e)
             }
-            Result.success(calls)
-        } catch (e: Exception) {
-            Result.success(allCallsFlow.value)
         }
     }
 
@@ -429,30 +457,40 @@ class BizVoiceRepository(
     // ==========================================
 
     suspend fun refreshContacts(
+        forceRefresh: Boolean = false,
         search: String? = null,
         isDnd: Int? = null,
         isBlacklisted: Int? = null
     ): Result<List<Contact>> = withContext(Dispatchers.IO) {
-        try {
-            val res = apiClient.getService().getContacts(
-                name = search,
-                isDnd = isDnd,
-                isBlacklisted = isBlacklisted
-            )
-            val contacts: List<Contact> = if (res.isSuccessful && res.body() != null) {
-                val data = res.body()!!.data
-                data?.data?.map { it.toContact() } ?: emptyList()
-            } else {
-                allContactsFlow.value
+        refreshContactsMutex.withLock {
+            val now = System.currentTimeMillis()
+            if (!forceRefresh && search == null && isDnd == null && isBlacklisted == null && (now - lastContactsFetchTime) < 2000L && allContactsFlow.value.isNotEmpty()) {
+                return@withContext Result.success(allContactsFlow.value)
             }
-
-            if (contacts.isNotEmpty()) {
-                val entities = contacts.map { ContactEntity.fromContact(it) }
-                contactDao.insertAllContacts(entities)
+            try {
+                val res = apiClient.getService().getContacts(
+                    name = search,
+                    isDnd = isDnd,
+                    isBlacklisted = isBlacklisted
+                )
+                if (res.isSuccessful && res.body() != null) {
+                    val data = res.body()!!.data
+                    val contacts: List<Contact> = data?.data?.map { it.toContact() } ?: emptyList()
+                    if (contacts.isNotEmpty()) {
+                        val entities = contacts.map { ContactEntity.fromContact(it) }
+                        contactDao.insertAllContacts(entities)
+                    }
+                    lastContactsFetchTime = System.currentTimeMillis()
+                    Result.success(contacts)
+                } else {
+                    val errorMsg = res.errorBody()?.string() ?: "Failed to fetch contacts (HTTP ${res.code()})"
+                    Log.e("BizVoiceRepository", "getContacts failed: $errorMsg")
+                    Result.failure(Exception(errorMsg))
+                }
+            } catch (e: Exception) {
+                Log.e("BizVoiceRepository", "getContacts exception: ${e.message}", e)
+                Result.failure(e)
             }
-            Result.success(contacts)
-        } catch (e: Exception) {
-            Result.success(allContactsFlow.value)
         }
     }
 
