@@ -215,95 +215,10 @@ fun ProfileScreen(
                 )
 
                 Text(
-                    text = "${user.role ?: "Agent"} • ${user.company ?: "BizVoice Enterprise"}",
+                    text = user.role ?: "Agent",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Availability Status Selector
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "PRESENCE & AVAILABILITY",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            StatusChip(
-                                label = "Available",
-                                color = Color(0xFF22C55E),
-                                isSelected = user.status.equals("active", ignoreCase = true) || user.status.equals("available", ignoreCase = true),
-                                onClick = {
-                                    scope.launch {
-                                        repository.updateProfile(
-                                            name = user.name,
-                                            email = user.email,
-                                            assignedPhoneNumber = user.assignedPhoneNumber,
-                                            company = user.company,
-                                            role = user.role,
-                                            status = "active"
-                                        )
-                                        successMessage = "Status updated to Available"
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-
-                            StatusChip(
-                                label = "Busy",
-                                color = Color(0xFFEF4444),
-                                isSelected = user.status.equals("busy", ignoreCase = true),
-                                onClick = {
-                                    scope.launch {
-                                        repository.updateProfile(
-                                            name = user.name,
-                                            email = user.email,
-                                            assignedPhoneNumber = user.assignedPhoneNumber,
-                                            company = user.company,
-                                            role = user.role,
-                                            status = "busy"
-                                        )
-                                        successMessage = "Status updated to Busy"
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-
-                            StatusChip(
-                                label = "Away",
-                                color = Color(0xFFF59E0B),
-                                isSelected = user.status.equals("away", ignoreCase = true),
-                                onClick = {
-                                    scope.launch {
-                                        repository.updateProfile(
-                                            name = user.name,
-                                            email = user.email,
-                                            assignedPhoneNumber = user.assignedPhoneNumber,
-                                            company = user.company,
-                                            role = user.role,
-                                            status = "away"
-                                        )
-                                        successMessage = "Status updated to Away"
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
@@ -403,14 +318,6 @@ fun ProfileScreen(
                             icon = Icons.Default.Work,
                             label = "Job Role",
                             value = user.role ?: "Agent"
-                        )
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
-                        ProfileInfoRow(
-                            icon = Icons.Default.Business,
-                            label = "Organization / Company",
-                            value = user.company ?: "BizVoice Enterprise"
                         )
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
@@ -627,44 +534,6 @@ fun ProfileScreen(
                 }
             }
         )
-    }
-}
-
-@Composable
-private fun StatusChip(
-    label: String,
-    color: Color,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = if (isSelected) color.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
-        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, color) else null,
-        modifier = modifier.height(40.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(color)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                ),
-                color = if (isSelected) color else MaterialTheme.colorScheme.onSurface
-            )
-        }
     }
 }
 
