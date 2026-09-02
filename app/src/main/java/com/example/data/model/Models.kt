@@ -147,6 +147,7 @@ data class GrowfoneUserDto(
     val parentUserId: String? = "",
     @Json(name = "role_id")
     val roleId: String? = "",
+    val role: RoleBlockDto? = null,
     @Json(name = "created_at")
     val createdAt: String? = null,
     @Json(name = "updated_at")
@@ -154,8 +155,19 @@ data class GrowfoneUserDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class RoleBlockDto(
+    val id: String? = "",
+    val name: String? = "",
+    val slug: String? = "",
+    val description: String? = "",
+    @Json(name = "is_custom")
+    val isCustom: Boolean? = false
+)
+
+@JsonClass(generateAdapter = true)
 data class AdminLoginDataDto(
     val user: GrowfoneUserDto? = null,
+    val role: RoleBlockDto? = null,
     val token: String? = null
 )
 
@@ -824,6 +836,8 @@ data class User(
     val avatarUrl: String? = null,
     val company: String? = "BizVoice Global Corp",
     val role: String? = "user",
+    @Json(name = "role_slug")
+    val roleSlug: String? = null,
     val credits: Int = 0,
     val authKey: String? = null
 )
@@ -942,15 +956,25 @@ fun parseIsoTimestamp(isoString: String?): Long {
     }
 }
 
-fun GrowfoneUserDto.toUser(assignedNumber: String? = null): User {
+fun GrowfoneUserDto.toUser(assignedNumber: String? = null, directRole: RoleBlockDto? = null): User {
     val phone = if (!assignedNumber.isNullOrBlank()) assignedNumber else phoneNumber
+    val effectiveRoleBlock = directRole ?: role
+    val resolvedRoleSlug = effectiveRoleBlock?.slug?.trim()?.lowercase()?.ifBlank { null }
+    val isAdministrator = resolvedRoleSlug == "admin" || resolvedRoleSlug == "super-admin"
+    val resolvedRoleName = when {
+        !effectiveRoleBlock?.name.isNullOrBlank() -> effectiveRoleBlock!!.name!!.trim()
+        isAdministrator -> "Admin"
+        roleId?.isNotBlank() == true -> "Team Member"
+        else -> "Team Member"
+    }
     return User(
         id = id?.ifBlank { "user_default" } ?: "user_default",
         name = name?.ifBlank { "User" } ?: "User",
         email = email.orEmpty(),
         assignedPhoneNumber = phone?.ifBlank { null },
         status = status ?: "active",
-        role = if (roleId?.isNotBlank() == true) "Team Member" else "user",
+        role = resolvedRoleName,
+        roleSlug = resolvedRoleSlug,
         company = "BizVoice Global Corp",
         credits = credits ?: 0,
         authKey = authKey
@@ -1029,3 +1053,514 @@ fun DialingCountryDto.toDialingCountry(): DialingCountry {
         enabled = enabled
     )
 }
+
+// =========================================================================
+// 12. ADMIN CONSOLE DTOs (14 · Admin Console)
+// =========================================================================
+
+@JsonClass(generateAdapter = true)
+data class PagedDataDto<T>(
+    @Json(name = "current_page")
+    val currentPage: Int? = 1,
+    val data: List<T>? = emptyList(),
+    @Json(name = "first_page_url")
+    val firstPageUrl: String? = null,
+    val from: Int? = null,
+    @Json(name = "last_page")
+    val lastPage: Int? = 1,
+    @Json(name = "last_page_url")
+    val lastPageUrl: String? = null,
+    @Json(name = "next_page_url")
+    val nextPageUrl: String? = null,
+    val path: String? = null,
+    @Json(name = "per_page")
+    val perPage: Int? = 15,
+    @Json(name = "prev_page_url")
+    val prevPageUrl: String? = null,
+    val to: Int? = null,
+    val total: Int? = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminUserAssignedNumberDto(
+    val id: String? = null,
+    @Json(name = "phone_number")
+    val phoneNumber: String? = "",
+    @Json(name = "friendly_name")
+    val friendlyName: String? = null,
+    @Json(name = "country_code")
+    val countryCode: String? = "US",
+    val status: Int? = 1,
+    @Json(name = "status_label")
+    val statusLabel: String? = "Active"
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminUserDto(
+    val id: String? = null,
+    val name: String? = "",
+    val email: String? = "",
+    @Json(name = "phone_number")
+    val phoneNumber: String? = null,
+    val status: String? = "active", // "active" | "inactive"
+    @Json(name = "is_active")
+    val isActive: Boolean? = true,
+    val credits: Int? = 0,
+    val role: RoleBlockDto? = null,
+    @Json(name = "assigned_numbers")
+    val assignedNumbers: List<AdminUserAssignedNumberDto>? = emptyList(),
+    @Json(name = "created_at")
+    val createdAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class UserStatsDto(
+    @Json(name = "total_calls")
+    val totalCalls: Int? = 0,
+    @Json(name = "outbound_calls")
+    val outboundCalls: Int? = 0,
+    @Json(name = "inbound_calls")
+    val inboundCalls: Int? = 0,
+    @Json(name = "answered_calls")
+    val answeredCalls: Int? = 0,
+    @Json(name = "unanswered_calls")
+    val unansweredCalls: Int? = 0,
+    @Json(name = "total_seconds")
+    val totalSeconds: Long? = 0L,
+    @Json(name = "total_minutes")
+    val totalMinutes: Double? = 0.0,
+    @Json(name = "avg_duration_seconds")
+    val avgDurationSeconds: Double? = 0.0,
+    @Json(name = "answer_rate")
+    val answerRate: Double? = 0.0,
+    @Json(name = "last_call_at")
+    val lastCallAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminUserDetailDto(
+    val id: String? = null,
+    val name: String? = "",
+    val email: String? = "",
+    @Json(name = "phone_number")
+    val phoneNumber: String? = null,
+    val status: String? = "active",
+    @Json(name = "is_active")
+    val isActive: Boolean? = true,
+    val credits: Int? = 0,
+    val role: RoleBlockDto? = null,
+    @Json(name = "assigned_numbers")
+    val assignedNumbers: List<AdminUserAssignedNumberDto>? = emptyList(),
+    val stats: UserStatsDto? = null,
+    @Json(name = "contacts_count")
+    val contactsCount: Int? = 0,
+    @Json(name = "parent_user_id")
+    val parentUserId: String? = null,
+    @Json(name = "created_at")
+    val createdAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class CreateAdminUserRequest(
+    val name: String,
+    val email: String,
+    val password: String,
+    @Json(name = "phone_number")
+    val phoneNumber: String? = null,
+    @Json(name = "role_id")
+    val roleId: String? = null,
+    val status: String? = "active",
+    @Json(name = "parent_user_id")
+    val parentUserId: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class UpdateAdminUserRequest(
+    val name: String? = null,
+    val email: String? = null,
+    val password: String? = null,
+    @Json(name = "phone_number")
+    val phoneNumber: String? = null,
+    @Json(name = "friendly_name")
+    val friendlyName: String? = null,
+    @Json(name = "role_id")
+    val roleId: String? = null,
+    val status: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class UpdateAdminUserStatusRequest(
+    val status: String // "active" | "inactive"
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminCallDto(
+    val id: String? = null,
+    val direction: String? = "outbound",
+    val status: String? = "completed",
+    @Json(name = "from_phone_number")
+    val fromPhoneNumber: String? = "",
+    @Json(name = "to_phone_number")
+    val toPhoneNumber: String? = "",
+    @Json(name = "to_country_code")
+    val toCountryCode: String? = "US",
+    val duration: Long? = 0L,
+    @Json(name = "duration_label")
+    val durationLabel: String? = "00:00",
+    @Json(name = "call_sid")
+    val callSid: String? = null,
+    @Json(name = "created_at")
+    val createdAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminCallsDataDto(
+    @Json(name = "current_page")
+    val currentPage: Int? = 1,
+    val data: List<AdminCallDto>? = emptyList(),
+    @Json(name = "last_page")
+    val lastPage: Int? = 1,
+    @Json(name = "per_page")
+    val perPage: Int? = 15,
+    val total: Int? = 0,
+    val stats: UserStatsDto? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminNumberAssignedUserDto(
+    val id: String? = null,
+    val name: String? = "",
+    val email: String? = "",
+    @Json(name = "phone_number")
+    val phoneNumber: String? = null,
+    val status: String? = "active"
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminNumberDto(
+    val id: String? = null,
+    @Json(name = "phone_number")
+    val phoneNumber: String? = "",
+    @Json(name = "friendly_name")
+    val friendlyName: String? = null,
+    @Json(name = "country_code")
+    val countryCode: String? = "US",
+    val status: Int? = 1, // 0 = Inactive, 1 = Active, 9 = Released
+    @Json(name = "status_label")
+    val statusLabel: String? = "Active",
+    @Json(name = "is_assigned")
+    val isAssigned: Boolean? = false,
+    val sid: String? = null,
+    @Json(name = "activation_date")
+    val activationDate: String? = null,
+    @Json(name = "user_id")
+    val userId: String? = null,
+    @Json(name = "user_name")
+    val userName: String? = null,
+    @Json(name = "assigned_user")
+    val assignedUser: AdminNumberAssignedUserDto? = null,
+    @Json(name = "user")
+    val user: AdminNumberAssignedUserDto? = null,
+    @Json(name = "created_at")
+    val createdAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class PurchaseAdminNumbersRequest(
+    val numbers: List<String>,
+    @Json(name = "country_code")
+    val countryCode: String = "US",
+    @Json(name = "friendly_name")
+    val friendlyName: String? = null,
+    @Json(name = "assign_to")
+    val assignTo: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class PurchaseResultDto(
+    val purchased: List<AdminNumberDto>? = emptyList(),
+    val failed: List<PurchaseFailedItemDto>? = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class PurchaseFailedItemDto(
+    @Json(name = "phone_number")
+    val phoneNumber: String? = "",
+    val reason: String? = "Unknown error"
+)
+
+@JsonClass(generateAdapter = true)
+data class AssignNumberRequest(
+    @Json(name = "user_id")
+    val userId: String
+)
+
+@JsonClass(generateAdapter = true)
+data class ReleaseNumberRequest(
+    val confirm: Boolean = true
+)
+
+@JsonClass(generateAdapter = true)
+data class BulkUnassignNumbersRequest(
+    val ids: List<String>
+)
+
+@JsonClass(generateAdapter = true)
+data class BulkReleaseNumbersRequest(
+    val ids: List<String>,
+    val confirm: Boolean = true
+)
+
+@JsonClass(generateAdapter = true)
+data class BulkFailedItemDto(
+    val id: String? = null,
+    val reason: String? = "Failed"
+)
+
+@JsonClass(generateAdapter = true)
+data class BulkUnassignResultDto(
+    val unassigned: List<String>? = emptyList(),
+    val failed: List<BulkFailedItemDto>? = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class BulkReleaseResultDto(
+    val released: List<String>? = emptyList(),
+    val failed: List<BulkFailedItemDto>? = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class SyncNumbersResultDto(
+    val synced: Int? = 0,
+    @Json(name = "marked_released")
+    val markedReleased: Int? = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class AnalyticsRangeDto(
+    val from: String? = "",
+    val to: String? = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class AnalyticsTotalsDto(
+    @Json(name = "total_calls")
+    val totalCalls: Int? = 0,
+    @Json(name = "outbound_calls")
+    val outboundCalls: Int? = 0,
+    @Json(name = "inbound_calls")
+    val inboundCalls: Int? = 0,
+    @Json(name = "answered_calls")
+    val answeredCalls: Int? = 0,
+    @Json(name = "unanswered_calls")
+    val unansweredCalls: Int? = 0,
+    @Json(name = "total_seconds")
+    val totalSeconds: Long? = 0L,
+    @Json(name = "total_minutes")
+    val totalMinutes: Double? = 0.0,
+    @Json(name = "avg_duration_seconds")
+    val avgDurationSeconds: Double? = 0.0,
+    @Json(name = "answer_rate")
+    val answerRate: Double? = 0.0
+)
+
+@JsonClass(generateAdapter = true)
+data class AnalyticsUsersDto(
+    val total: Int? = 0,
+    val active: Int? = 0,
+    val inactive: Int? = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class DailyTrendDto(
+    val day: String? = "",
+    val calls: Int? = 0,
+    val minutes: Double? = 0.0
+)
+
+@JsonClass(generateAdapter = true)
+data class UserMetricDto(
+    @Json(name = "user_id")
+    val userId: String? = null,
+    val name: String? = "",
+    val email: String? = "",
+    @Json(name = "phone_number")
+    val phoneNumber: String? = null,
+    @Json(name = "assigned_phone_number")
+    val assignedPhoneNumber: String? = null,
+    val status: String? = "active",
+    @Json(name = "role_name")
+    val roleName: String? = "",
+    @Json(name = "total_calls")
+    val totalCalls: Int? = 0,
+    @Json(name = "outbound_calls")
+    val outboundCalls: Int? = 0,
+    @Json(name = "inbound_calls")
+    val inboundCalls: Int? = 0,
+    @Json(name = "answered_calls")
+    val answeredCalls: Int? = 0,
+    @Json(name = "unanswered_calls")
+    val unansweredCalls: Int? = 0,
+    @Json(name = "total_seconds")
+    val totalSeconds: Long? = 0L,
+    @Json(name = "total_minutes")
+    val totalMinutes: Double? = 0.0,
+    @Json(name = "avg_duration_seconds")
+    val avgDurationSeconds: Double? = 0.0,
+    @Json(name = "answer_rate")
+    val answerRate: Double? = 0.0
+)
+
+@JsonClass(generateAdapter = true)
+data class AnalyticsOverviewDto(
+    val range: AnalyticsRangeDto? = null,
+    val totals: AnalyticsTotalsDto? = null,
+    val users: AnalyticsUsersDto? = null,
+    @Json(name = "daily_trend")
+    val dailyTrend: List<DailyTrendDto>? = emptyList(),
+    @Json(name = "top_performers")
+    val topPerformers: List<UserMetricDto>? = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class FeedbackUserDto(
+    val id: String? = null,
+    val name: String? = "",
+    val email: String? = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminFeedbackDto(
+    val id: String? = null,
+    val title: String? = "",
+    val message: String? = null,
+    val description: String? = null,
+    val type: String? = "feedback",
+    val priority: String? = "medium", // low, medium, high, critical
+    val status: String? = "pending", // pending, in_progress, resolved, closed
+    val answer: String? = null,
+    @Json(name = "is_answered")
+    val isAnswered: Boolean? = false,
+    @Json(name = "answered_by")
+    val answeredBy: String? = null,
+    @Json(name = "answered_at")
+    val answeredAt: String? = null,
+    val user: FeedbackUserDto? = null,
+    @Json(name = "created_at")
+    val createdAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminFeedbackAnswerRequest(
+    val answer: String,
+    val status: String? = "resolved"
+)
+
+@JsonClass(generateAdapter = true)
+data class UserContactSummaryDto(
+    @Json(name = "user_id")
+    val userId: String? = null,
+    val name: String? = "",
+    val email: String? = "",
+    @Json(name = "phone_number")
+    val phoneNumber: String? = null,
+    @Json(name = "assigned_phone_number")
+    val assignedPhoneNumber: String? = null,
+    val status: String? = "active",
+    @Json(name = "contacts_count")
+    val contactsCount: Int? = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class ContactsSummaryDto(
+    val users: List<UserContactSummaryDto>? = emptyList(),
+    @Json(name = "total_assigned")
+    val totalAssigned: Int? = 0,
+    @Json(name = "unassigned_legacy")
+    val unassignedLegacy: Int? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class AdminContactDto(
+    val id: Int? = 0,
+    @Json(name = "user_id")
+    val userId: String? = null,
+    @Json(name = "first_name")
+    val firstName: String? = "",
+    @Json(name = "last_name")
+    val lastName: String? = null,
+    val number: String? = "",
+    val email: String? = null,
+    @Json(name = "company_name")
+    val companyName: String? = null,
+    @Json(name = "is_dnd")
+    val isDnd: Boolean? = false,
+    @Json(name = "is_blacklisted")
+    val isBlacklisted: Boolean? = false,
+    @Json(name = "owner_name")
+    val ownerName: String? = null,
+    @Json(name = "created_at")
+    val createdAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SyncContactItemDto(
+    @Json(name = "first_name")
+    val firstName: String,
+    @Json(name = "last_name")
+    val lastName: String? = null,
+    val number: String,
+    val email: String? = null,
+    @Json(name = "company_name")
+    val companyName: String? = null,
+    val extension: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SyncContactsRequest(
+    val contacts: List<SyncContactItemDto>
+)
+
+@JsonClass(generateAdapter = true)
+data class SyncContactActionItemDto(
+    val number: String? = "",
+    @Json(name = "contact_id")
+    val contactId: Int? = null,
+    val action: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SyncContactConflictItemDto(
+    val number: String? = "",
+    @Json(name = "contact_id")
+    val contactId: Int? = null,
+    val action: String? = "conflict",
+    val reason: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SyncContactFailedItemDto(
+    val number: String? = "",
+    val reason: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SyncContactsSummaryStatsDto(
+    val created: Int? = 0,
+    val claimed: Int? = 0,
+    val existing: Int? = 0,
+    val conflicts: Int? = 0,
+    val failed: Int? = 0,
+    @Json(name = "total_owned")
+    val totalOwned: Int? = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class SyncContactsResponseDto(
+    val created: List<SyncContactActionItemDto>? = emptyList(),
+    val claimed: List<SyncContactActionItemDto>? = emptyList(),
+    val existing: List<SyncContactActionItemDto>? = emptyList(),
+    val conflicts: List<SyncContactConflictItemDto>? = emptyList(),
+    val failed: List<SyncContactFailedItemDto>? = emptyList(),
+    val summary: SyncContactsSummaryStatsDto? = null
+)

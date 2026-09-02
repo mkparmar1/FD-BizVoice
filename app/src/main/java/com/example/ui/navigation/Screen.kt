@@ -19,6 +19,17 @@ sealed class Screen(val route: String) {
     object Permissions : Screen("permissions")
     object About : Screen("about")
     object BackendConfig : Screen("backend_config")
+
+    // Admin Console Screens
+    object AdminConsole : Screen("admin_console")
+    object AdminUsers : Screen("admin_users")
+    object AdminUserDetail : Screen("admin_user_detail/{userId}") {
+        fun createRoute(userId: String) = "admin_user_detail/$userId"
+    }
+    object AdminNumbers : Screen("admin_numbers")
+    object AdminAnalytics : Screen("admin_analytics")
+    object AdminFeedback : Screen("admin_feedback")
+    object AdminContacts : Screen("admin_contacts")
 }
 
 enum class MainTab(val title: String) {

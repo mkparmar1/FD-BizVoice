@@ -23,6 +23,7 @@ class SessionManager(context: Context) {
         private const val KEY_ASSIGNED_PHONE = "assigned_phone"
         private const val KEY_USER_STATUS = "user_status"
         private const val KEY_USER_ROLE = "user_role"
+        private const val KEY_ROLE_SLUG = "role_slug"
         private const val KEY_USER_COMPANY = "user_company"
         private const val KEY_USER_CREDITS = "user_credits"
         private const val KEY_BASE_API_URL = "base_api_url"
@@ -88,6 +89,7 @@ class SessionManager(context: Context) {
             .putString(KEY_ASSIGNED_PHONE, cleanPhone)
             .putString(KEY_USER_STATUS, sanitizedUser.status)
             .putString(KEY_USER_ROLE, sanitizedUser.role)
+            .putString(KEY_ROLE_SLUG, sanitizedUser.roleSlug?.trim()?.lowercase().orEmpty())
             .putString(KEY_USER_COMPANY, sanitizedUser.company)
             .putInt(KEY_USER_CREDITS, sanitizedUser.credits)
 
@@ -98,6 +100,30 @@ class SessionManager(context: Context) {
 
         _authStateFlow.value = true
         _currentUserFlow.value = sanitizedUser.copy(authKey = effectiveAuthKey)
+    }
+
+    fun saveRoleSlug(slug: String?) {
+        val clean = slug?.trim()?.lowercase().orEmpty()
+        prefs.edit().putString(KEY_ROLE_SLUG, clean).apply()
+        val current = getCurrentUser()
+        if (current != null) {
+            val updated = current.copy(roleSlug = clean.ifBlank { null })
+            _currentUserFlow.value = updated
+        }
+    }
+
+    fun getRoleSlug(): String {
+        return prefs.getString(KEY_ROLE_SLUG, "") ?: ""
+    }
+
+    fun isAdmin(): Boolean {
+        val slug = getRoleSlug()
+        return slug == "admin" || slug == "super-admin"
+    }
+
+    fun isSuperAdmin(): Boolean {
+        val slug = getRoleSlug()
+        return slug == "super-admin"
     }
 
     fun saveTwilioVoiceToken(token: String?) {
@@ -145,6 +171,7 @@ class SessionManager(context: Context) {
             .putString(KEY_ASSIGNED_PHONE, user.assignedPhoneNumber)
             .putString(KEY_USER_STATUS, user.status)
             .putString(KEY_USER_ROLE, user.role)
+            .putString(KEY_ROLE_SLUG, user.roleSlug?.trim()?.lowercase().orEmpty())
             .putString(KEY_USER_COMPANY, user.company)
             .putInt(KEY_USER_CREDITS, user.credits)
 
@@ -207,6 +234,7 @@ class SessionManager(context: Context) {
         val phone = prefs.getString(KEY_ASSIGNED_PHONE, null)?.ifBlank { null } ?: "+12183061691"
         val status = prefs.getString(KEY_USER_STATUS, "active") ?: "active"
         val role = prefs.getString(KEY_USER_ROLE, "user") ?: "user"
+        val roleSlug = prefs.getString(KEY_ROLE_SLUG, null)?.ifBlank { null }
         val company = prefs.getString(KEY_USER_COMPANY, "BizVoice Global Corp") ?: "BizVoice Global Corp"
         val credits = prefs.getInt(KEY_USER_CREDITS, 250)
         val authKey = prefs.getString(KEY_DEVICE_AUTH_KEY, null)?.ifBlank { null } ?: getAuthToken()
@@ -218,6 +246,7 @@ class SessionManager(context: Context) {
             assignedPhoneNumber = phone,
             status = status,
             role = role,
+            roleSlug = roleSlug,
             company = company,
             credits = credits,
             authKey = authKey
@@ -235,6 +264,7 @@ class SessionManager(context: Context) {
             .remove(KEY_ASSIGNED_PHONE)
             .remove(KEY_USER_STATUS)
             .remove(KEY_USER_ROLE)
+            .remove(KEY_ROLE_SLUG)
             .remove(KEY_USER_COMPANY)
             .remove(KEY_USER_CREDITS)
             .apply()

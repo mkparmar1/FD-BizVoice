@@ -44,6 +44,9 @@ interface ContactDao {
     @Query("SELECT * FROM contacts ORDER BY name ASC")
     fun getAllContacts(): Flow<List<ContactEntity>>
 
+    @Query("SELECT * FROM contacts ORDER BY name ASC")
+    suspend fun getAllContactsList(): List<ContactEntity>
+
     @Query("SELECT * FROM contacts WHERE id = :id LIMIT 1")
     suspend fun getContactById(id: String): ContactEntity?
 

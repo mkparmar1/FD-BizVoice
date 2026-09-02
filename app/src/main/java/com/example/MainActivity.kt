@@ -25,6 +25,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.ui.navigation.Screen
+import com.example.ui.screens.admin.AdminAnalyticsScreen
+import com.example.ui.screens.admin.AdminConsoleScreen
+import com.example.ui.screens.admin.AdminContactsScreen
+import com.example.ui.screens.admin.AdminFeedbackScreen
+import com.example.ui.screens.admin.AdminNumbersScreen
+import com.example.ui.screens.admin.AdminUsersScreen
 import com.example.ui.screens.auth.ForgotPasswordScreen
 import com.example.ui.screens.auth.LoginScreen
 import com.example.ui.screens.contacts.AddEditContactScreen
@@ -170,6 +176,9 @@ fun BizVoiceNavigation(appContainer: BizVoiceAppContainer) {
                 onNavigateToAbout = {
                     navController.navigate(Screen.About.route)
                 },
+                onNavigateToAdminConsole = {
+                    navController.navigate(Screen.AdminConsole.route)
+                },
                 onLogoutComplete = {
                     navController.navigate(Screen.Login.route) {
                         popUpTo(0) { inclusive = true }
@@ -279,6 +288,54 @@ fun BizVoiceNavigation(appContainer: BizVoiceAppContainer) {
 
         composable(Screen.About.route) {
             AboutScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        // Admin Console Destinations
+        composable(Screen.AdminConsole.route) {
+            AdminConsoleScreen(
+                repository = appContainer.repository,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToUsers = { navController.navigate(Screen.AdminUsers.route) },
+                onNavigateToNumbers = { navController.navigate(Screen.AdminNumbers.route) },
+                onNavigateToAnalytics = { navController.navigate(Screen.AdminAnalytics.route) },
+                onNavigateToFeedback = { navController.navigate(Screen.AdminFeedback.route) },
+                onNavigateToContacts = { navController.navigate(Screen.AdminContacts.route) }
+            )
+        }
+
+        composable(Screen.AdminUsers.route) {
+            AdminUsersScreen(
+                repository = appContainer.repository,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.AdminNumbers.route) {
+            AdminNumbersScreen(
+                repository = appContainer.repository,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.AdminAnalytics.route) {
+            AdminAnalyticsScreen(
+                repository = appContainer.repository,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.AdminFeedback.route) {
+            AdminFeedbackScreen(
+                repository = appContainer.repository,
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.AdminContacts.route) {
+            AdminContactsScreen(
+                repository = appContainer.repository,
                 onNavigateBack = { navController.popBackStack() }
             )
         }

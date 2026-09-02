@@ -51,6 +51,26 @@ class BizVoiceRepository(
     val currentUserFlow = sessionManager.currentUserFlow
     val authStateFlow = sessionManager.authStateFlow
 
+    private val _isAdminFlow = MutableStateFlow(sessionManager.isAdmin())
+    val isAdminFlow: StateFlow<Boolean> = _isAdminFlow.asStateFlow()
+
+    private val _isSuperAdminFlow = MutableStateFlow(sessionManager.isSuperAdmin())
+    val isSuperAdminFlow: StateFlow<Boolean> = _isSuperAdminFlow.asStateFlow()
+
+    private fun updateAdminRoleStatus(roleSlug: String?) {
+        if (!roleSlug.isNullOrBlank()) {
+            sessionManager.saveRoleSlug(roleSlug)
+        }
+        _isAdminFlow.value = sessionManager.isAdmin()
+        _isSuperAdminFlow.value = sessionManager.isSuperAdmin()
+    }
+
+    private fun handleAdminForbidden() {
+        sessionManager.saveRoleSlug("user")
+        _isAdminFlow.value = false
+        _isSuperAdminFlow.value = false
+    }
+
     // Local cached calls hot StateFlow with duplicate filtering
     val allCallsFlow: StateFlow<List<CallRecord>> = callRecordDao.getAllCalls()
         .map { list ->
@@ -172,7 +192,8 @@ class BizVoiceRepository(
                     )
                 }
 
-                val user = rawUser?.toUser() ?: return@withContext Result.failure(
+                val rawRoleBlock = data.role ?: rawUser?.role
+                val user = rawUser?.toUser(directRole = rawRoleBlock) ?: return@withContext Result.failure(
                     Exception("Unable to load user account profile. Please try again.")
                 )
 
@@ -185,6 +206,7 @@ class BizVoiceRepository(
                 }
 
                 sessionManager.saveAuth(token = token, user = user, deviceAuthKey = user.authKey)
+                updateAdminRoleStatus(rawRoleBlock?.slug ?: user.roleSlug)
                 refreshUserData(forceRefresh = true)
                 refreshCalls(forceRefresh = true)
                 refreshContacts(forceRefresh = true)
@@ -292,9 +314,13 @@ class BizVoiceRepository(
             } catch (_: Exception) {}
             sessionManager.clearSession()
             database.clearAllTables()
+            _isAdminFlow.value = false
+            _isSuperAdminFlow.value = false
             Result.success(Unit)
         } catch (e: Exception) {
             sessionManager.clearSession()
+            _isAdminFlow.value = false
+            _isSuperAdminFlow.value = false
             Result.success(Unit)
         }
     }
@@ -313,8 +339,10 @@ class BizVoiceRepository(
             try {
                 val res = apiClient.getService().getProfile()
                 if (res.isSuccessful && res.body()?.data != null) {
-                    val user = res.body()!!.data!!.toUser()
+                    val rawUser = res.body()!!.data!!
+                    val user = rawUser.toUser()
                     sessionManager.updateFullProfile(user)
+                    updateAdminRoleStatus(rawUser.role?.slug ?: user.roleSlug)
                     lastUserDataFetchTime = System.currentTimeMillis()
                     Result.success(user)
                 } else {
@@ -936,6 +964,94 @@ class BizVoiceRepository(
         }
     }
 
+    suspend fun createCompany(req: CreateCompanyRequest): Result<CompanyDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().createCompany(req)
+            val data = res.body()?.data ?: return@withContext Result.failure(Exception(res.errorBody()?.string() ?: "Failed to create company"))
+            Result.success(data)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateCompany(req: UpdateCompanyRequest): Result<CompanyDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().updateCompany(req)
+            val data = res.body()?.data ?: return@withContext Result.failure(Exception(res.errorBody()?.string() ?: "Failed to update company"))
+            Result.success(data)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getTeamSubscriptions(): Result<TeamSubscriptionsDataDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getTeamSubscriptions()
+            val data = res.body()?.data ?: TeamSubscriptionsDataDto()
+            Result.success(data)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun generatePaymentLink(req: GeneratePaymentLinkRequest): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().generatePaymentLink(req)
+            val url = res.body()?.data ?: return@withContext Result.failure(Exception(res.errorBody()?.string() ?: "Failed to generate payment link"))
+            Result.success(url)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun checkPaymentStatus(razorpayPaymentId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().checkPaymentStatus(CheckPaymentStatusRequest(razorpayPaymentId))
+            Result.success(res.isSuccessful)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun cronForReleaseInactiveNumber(): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().cronForReleaseInactiveNumber()
+            if (res.isSuccessful) Result.success(Unit) else Result.failure(Exception("Failed to run release cron"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getRoleHierarchy(): Result<List<RoleDto>> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getRoleHierarchy()
+            val list = res.body()?.data ?: emptyList()
+            Result.success(list)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun assignRoleSingleUser(userId: String, roleId: String): Result<GrowfoneUserDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().assignRoleSingleUser(UpdateUserRoleRequest(userId, roleId))
+            val user = res.body()?.data ?: return@withContext Result.failure(Exception(res.errorBody()?.string() ?: "Failed to assign role"))
+            Result.success(user)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun assignRoleWithHierarchy(userId: String, roleId: String): Result<UserRoleDetailDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().assignRoleWithHierarchy(UpdateUserRoleRequest(userId, roleId))
+            val detail = res.body()?.data ?: return@withContext Result.failure(Exception(res.errorBody()?.string() ?: "Failed to assign role with hierarchy"))
+            Result.success(detail)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     // ==========================================
     // 11. DIALING COUNTRIES & DIALER PREFERENCES
     // ==========================================
@@ -1184,6 +1300,586 @@ class BizVoiceRepository(
             trimmed.contains("SQLSTATE", ignoreCase = true) || trimmed.contains("Exception:", ignoreCase = true) ->
                 "An unexpected server error occurred. Please try again."
             else -> trimmed
+        }
+    }
+
+    // =========================================================================
+    // 13. ADMIN CONSOLE REPOSITORY API (14 · Admin Console)
+    // =========================================================================
+
+    suspend fun getAdminUsers(
+        search: String? = null,
+        status: String? = null,
+        roleId: String? = null,
+        roleSlug: String? = null,
+        perPage: Int = 15,
+        page: Int = 1
+    ): Result<PagedDataDto<AdminUserDto>> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getAdminUsers(
+                search = search?.trim()?.ifBlank { null },
+                status = status?.trim()?.ifBlank { null },
+                roleId = roleId?.trim()?.ifBlank { null },
+                roleSlug = roleSlug?.trim()?.ifBlank { null },
+                perPage = perPage,
+                page = page
+            )
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to load team users")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getAdminUserDetail(id: String): Result<AdminUserDetailDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getAdminUserDetail(id)
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to load user detail")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun createAdminUser(
+        name: String,
+        email: String,
+        password: String,
+        phoneNumber: String? = null,
+        roleId: String? = null,
+        status: String = "active",
+        parentUserId: String? = null
+    ): Result<AdminUserDto> = withContext(Dispatchers.IO) {
+        try {
+            val req = CreateAdminUserRequest(
+                name = name.trim(),
+                email = email.trim(),
+                password = password,
+                phoneNumber = phoneNumber?.trim()?.ifBlank { null },
+                roleId = roleId?.trim()?.ifBlank { null },
+                status = status,
+                parentUserId = parentUserId?.trim()?.ifBlank { null }
+            )
+            val res = apiClient.getService().createAdminUser(req)
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to create user")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateAdminUser(
+        id: String,
+        name: String? = null,
+        email: String? = null,
+        password: String? = null,
+        phoneNumber: String? = null,
+        friendlyName: String? = null,
+        roleId: String? = null,
+        status: String? = null
+    ): Result<AdminUserDto> = withContext(Dispatchers.IO) {
+        try {
+            val req = UpdateAdminUserRequest(
+                name = name?.trim()?.ifBlank { null },
+                email = email?.trim()?.ifBlank { null },
+                password = password?.ifBlank { null },
+                phoneNumber = phoneNumber?.trim()?.ifBlank { null },
+                friendlyName = friendlyName?.trim()?.ifBlank { null },
+                roleId = roleId?.trim()?.ifBlank { null },
+                status = status?.trim()?.ifBlank { null }
+            )
+            val res = apiClient.getService().updateAdminUser(id, req)
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to update user")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateAdminUserStatus(id: String, status: String): Result<AdminUserDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().updateAdminUserStatus(id, UpdateAdminUserStatusRequest(status))
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to update user status")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteAdminUser(id: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().deleteAdminUser(id)
+            if (res.isSuccessful) {
+                Result.success(Unit)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to delete user")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getAdminUserCalls(
+        id: String,
+        from: String? = null,
+        to: String? = null,
+        direction: String? = null,
+        status: String? = null,
+        search: String? = null,
+        perPage: Int = 15,
+        page: Int = 1
+    ): Result<AdminCallsDataDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getAdminUserCalls(
+                id = id,
+                from = from?.trim()?.ifBlank { null },
+                to = to?.trim()?.ifBlank { null },
+                direction = direction?.trim()?.ifBlank { null },
+                status = status?.trim()?.ifBlank { null },
+                search = search?.trim()?.ifBlank { null },
+                perPage = perPage,
+                page = page
+            )
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to load user calls")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // Numbers
+    suspend fun getAdminNumbers(
+        status: Int? = null,
+        search: String? = null,
+        isAssigned: Boolean? = null,
+        perPage: Int = 15,
+        page: Int = 1
+    ): Result<PagedDataDto<AdminNumberDto>> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getAdminNumbers(
+                status = status,
+                search = search?.trim()?.ifBlank { null },
+                isAssigned = isAssigned,
+                perPage = perPage,
+                page = page
+            )
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to load numbers")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun purchaseAdminNumbers(
+        numbers: List<String>,
+        countryCode: String = "US",
+        friendlyName: String? = null,
+        assignTo: String? = null
+    ): Result<PurchaseResultDto> = withContext(Dispatchers.IO) {
+        try {
+            val req = PurchaseAdminNumbersRequest(
+                numbers = numbers,
+                countryCode = countryCode,
+                friendlyName = friendlyName?.trim()?.ifBlank { null },
+                assignTo = assignTo?.trim()?.ifBlank { null }
+            )
+            val res = apiClient.getService().purchaseAdminNumbers(req)
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to purchase numbers")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun assignAdminNumber(numberId: String, userId: String): Result<AdminNumberDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().assignAdminNumber(numberId, AssignNumberRequest(userId))
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to assign number")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun unassignAdminNumber(numberId: String): Result<AdminNumberDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().unassignAdminNumber(numberId)
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to unassign number")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun releaseAdminNumber(numberId: String): Result<AdminNumberDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().releaseAdminNumber(numberId, ReleaseNumberRequest(confirm = true))
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to release number")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun bulkUnassignNumbers(numberIds: List<String>): Result<BulkUnassignResultDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().bulkUnassignNumbers(BulkUnassignNumbersRequest(numberIds))
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to bulk unassign numbers")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun bulkReleaseNumbers(numberIds: List<String>): Result<BulkReleaseResultDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().bulkReleaseNumbers(BulkReleaseNumbersRequest(numberIds, confirm = true))
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to bulk release numbers")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun syncAdminNumbers(): Result<SyncNumbersResultDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().syncAdminNumbers()
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to sync numbers with Twilio")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // Analytics
+    suspend fun getAdminAnalyticsOverview(from: String? = null, to: String? = null): Result<AnalyticsOverviewDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getAdminAnalyticsOverview(
+                from = from?.trim()?.ifBlank { null },
+                to = to?.trim()?.ifBlank { null }
+            )
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to load analytics overview")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getAdminAnalyticsUsers(
+        from: String? = null,
+        to: String? = null,
+        sort: String? = null,
+        order: String? = null,
+        perPage: Int = 15,
+        page: Int = 1
+    ): Result<PagedDataDto<UserMetricDto>> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getAdminAnalyticsUsers(
+                from = from?.trim()?.ifBlank { null },
+                to = to?.trim()?.ifBlank { null },
+                sort = sort?.trim()?.ifBlank { null },
+                order = order?.trim()?.ifBlank { null },
+                perPage = perPage,
+                page = page
+            )
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to load user analytics")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // Feedback
+    suspend fun getAdminFeedback(
+        status: String? = null,
+        priority: String? = null,
+        type: String? = null,
+        userId: String? = null,
+        answered: Boolean? = null,
+        search: String? = null,
+        perPage: Int = 15,
+        page: Int = 1
+    ): Result<PagedDataDto<AdminFeedbackDto>> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getAdminFeedback(
+                status = status?.trim()?.ifBlank { null },
+                priority = priority?.trim()?.ifBlank { null },
+                type = type?.trim()?.ifBlank { null },
+                userId = userId?.trim()?.ifBlank { null },
+                answered = answered,
+                search = search?.trim()?.ifBlank { null },
+                perPage = perPage,
+                page = page
+            )
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to load feedback tickets")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun answerAdminFeedback(
+        feedbackId: String,
+        answer: String,
+        status: String = "resolved"
+    ): Result<AdminFeedbackDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().answerAdminFeedback(
+                feedbackId,
+                AdminFeedbackAnswerRequest(answer.trim(), status.trim())
+            )
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to answer feedback")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // Contacts Summary & Contacts
+    suspend fun getAdminContactsSummary(): Result<ContactsSummaryDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getAdminContactsSummary()
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to load contacts summary")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getAdminContacts(
+        userId: String? = null,
+        search: String? = null,
+        perPage: Int = 15,
+        page: Int = 1
+    ): Result<PagedDataDto<AdminContactDto>> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().getAdminContacts(
+                userId = userId?.trim()?.ifBlank { null },
+                search = search?.trim()?.ifBlank { null },
+                perPage = perPage,
+                page = page
+            )
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                if (res.code() == 403) handleAdminForbidden()
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to load contacts")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun syncContactsToBackend(contacts: List<SyncContactItemDto>): Result<SyncContactsResponseDto> = withContext(Dispatchers.IO) {
+        try {
+            val res = apiClient.getService().syncContacts(SyncContactsRequest(contacts))
+            if (res.isSuccessful && res.body()?.data != null) {
+                Result.success(res.body()!!.data!!)
+            } else {
+                val msg = extractAdminErrorMessage(res.errorBody()?.string(), res.code(), "Failed to sync contacts")
+                Result.failure(Exception(msg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun syncDeviceContactsToBackend(): Result<SyncContactsSummaryStatsDto> = withContext(Dispatchers.IO) {
+        try {
+            // 1. Sync device contacts locally first
+            syncDeviceContacts()
+
+            // 2. Fetch local contacts and build sync payloads
+            val localContacts = contactDao.getAllContactsList()
+            val syncItems = localContacts.mapNotNull { entity ->
+                val phone = entity.phoneNumber.trim()
+                if (phone.isBlank()) return@mapNotNull null
+                val nameParts = entity.name.trim().split(" ", limit = 2)
+                val firstName = nameParts.firstOrNull()?.ifBlank { "Contact" } ?: "Contact"
+                val lastName = if (nameParts.size > 1) nameParts[1].ifBlank { null } else null
+                SyncContactItemDto(
+                    firstName = firstName,
+                    lastName = lastName,
+                    number = phone,
+                    email = entity.email,
+                    companyName = entity.organization
+                )
+            }.distinctBy { it.number }
+
+            if (syncItems.isEmpty()) {
+                return@withContext Result.success(SyncContactsSummaryStatsDto(0, 0, 0, 0, 0, 0))
+            }
+
+            // 3. Chunk at 500 per request
+            var totalCreated = 0
+            var totalClaimed = 0
+            var totalExisting = 0
+            var totalConflicts = 0
+            var totalFailed = 0
+            var totalOwned = 0
+
+            val chunks = syncItems.chunked(500)
+            for (chunk in chunks) {
+                val syncResult = syncContactsToBackend(chunk)
+                if (syncResult.isSuccess) {
+                    val resp = syncResult.getOrNull()
+                    val summary = resp?.summary
+                    totalCreated += summary?.created ?: resp?.created?.size ?: 0
+                    totalClaimed += summary?.claimed ?: resp?.claimed?.size ?: 0
+                    totalExisting += summary?.existing ?: resp?.existing?.size ?: 0
+                    totalConflicts += summary?.conflicts ?: resp?.conflicts?.size ?: 0
+                    totalFailed += summary?.failed ?: resp?.failed?.size ?: 0
+                    totalOwned = summary?.totalOwned ?: (totalCreated + totalClaimed + totalExisting)
+                }
+            }
+
+            Result.success(
+                SyncContactsSummaryStatsDto(
+                    created = totalCreated,
+                    claimed = totalClaimed,
+                    existing = totalExisting,
+                    conflicts = totalConflicts,
+                    failed = totalFailed,
+                    totalOwned = totalOwned
+                )
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun extractAdminErrorMessage(rawErrorBody: String?, httpCode: Int, defaultFallback: String): String {
+        if (!rawErrorBody.isNullOrBlank()) {
+            try {
+                val trimmed = rawErrorBody.trim()
+                if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                    val json = org.json.JSONObject(trimmed)
+                    if (json.has("message")) {
+                        val msg = json.optString("message").trim()
+                        if (msg.isNotBlank() && !msg.equals("null", ignoreCase = true)) return msg
+                    }
+                    if (json.has("error")) {
+                        val err = json.optString("error").trim()
+                        if (err.isNotBlank() && !err.equals("null", ignoreCase = true)) return err
+                    }
+                    if (json.has("errors")) {
+                        val errs = json.optJSONObject("errors")
+                        if (errs != null && errs.length() > 0) {
+                            val firstKey = errs.keys().next()
+                            val firstArr = errs.optJSONArray(firstKey)
+                            if (firstArr != null && firstArr.length() > 0) {
+                                val item = firstArr.optString(0).trim()
+                                if (item.isNotBlank()) return item
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return when (httpCode) {
+            403 -> "This area is restricted to administrators."
+            404 -> "Resource not found."
+            422 -> "Validation failed. Please check your inputs."
+            400 -> "Request refused by server."
+            else -> defaultFallback
         }
     }
 }

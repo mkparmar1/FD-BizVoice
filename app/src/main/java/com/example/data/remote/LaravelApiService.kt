@@ -82,6 +82,9 @@ interface LaravelApiService {
     @POST("purchaseNumbers")
     suspend fun purchaseNumbers(@Body req: PurchaseNumberRequest): Response<GrowfoneStatusIntEnvelope<PurchasedNumberDto>>
 
+    @POST("cronForReleaseInactiveNumber")
+    suspend fun cronForReleaseInactiveNumber(): Response<GrowfoneStatusBoolEnvelope<Any?>>
+
     @GET("getNumberDetails")
     suspend fun getNumberDetails(@Header("authToken") authToken: String): Response<GrowfoneStatusIntEnvelope<PurchasedNumberDto>>
 
@@ -206,6 +209,15 @@ interface LaravelApiService {
     @GET("roles/{roleId}/users")
     suspend fun getUsersByRole(@Path("roleId") roleId: String): Response<GrowfoneStatusBoolEnvelope<List<GrowfoneUserDto>>>
 
+    @GET("roles/hierarchy")
+    suspend fun getRoleHierarchy(): Response<GrowfoneStatusBoolEnvelope<List<RoleDto>>>
+
+    @POST("users/assign-role")
+    suspend fun assignRoleSingleUser(@Body req: UpdateUserRoleRequest): Response<GrowfoneCodeEnvelope<GrowfoneUserDto>>
+
+    @POST("roles/assign-with-hierarchy")
+    suspend fun assignRoleWithHierarchy(@Body req: UpdateUserRoleRequest): Response<GrowfoneStatusBoolEnvelope<UserRoleDetailDto>>
+
     @GET("users/{userId}/role")
     suspend fun getUserRoleAndPermissions(@Path("userId") userId: String): Response<GrowfoneStatusBoolEnvelope<UserRoleDetailDto>>
 
@@ -243,4 +255,158 @@ interface LaravelApiService {
 
     @GET("getAllInvoices")
     suspend fun getAllInvoices(@Query("limit") limit: Int? = 10): Response<GrowfoneStatusBoolEnvelope<InvoicesDataDto>>
+
+    // =========================================================================
+    // 11. CONTACTS SYNC (08 · Contacts)
+    // =========================================================================
+
+    @POST("contacts/sync")
+    suspend fun syncContacts(@Body req: SyncContactsRequest): Response<GrowfoneCodeEnvelope<SyncContactsResponseDto>>
+
+    // =========================================================================
+    // 12. ADMIN CONSOLE (14 · Admin Console)
+    // =========================================================================
+
+    // Users
+    @GET("admin/users")
+    suspend fun getAdminUsers(
+        @Query("search") search: String? = null,
+        @Query("status") status: String? = null,
+        @Query("role_id") roleId: String? = null,
+        @Query("role_slug") roleSlug: String? = null,
+        @Query("per_page") perPage: Int? = 15,
+        @Query("page") page: Int? = 1
+    ): Response<GrowfoneCodeEnvelope<PagedDataDto<AdminUserDto>>>
+
+    @GET("admin/users/{id}")
+    suspend fun getAdminUserDetail(
+        @Path("id") id: String
+    ): Response<GrowfoneCodeEnvelope<AdminUserDetailDto>>
+
+    @POST("admin/users")
+    suspend fun createAdminUser(
+        @Body req: CreateAdminUserRequest
+    ): Response<GrowfoneCodeEnvelope<AdminUserDto>>
+
+    @POST("admin/users/{id}")
+    suspend fun updateAdminUser(
+        @Path("id") id: String,
+        @Body req: UpdateAdminUserRequest
+    ): Response<GrowfoneCodeEnvelope<AdminUserDto>>
+
+    @POST("admin/users/{id}/status")
+    suspend fun updateAdminUserStatus(
+        @Path("id") id: String,
+        @Body req: UpdateAdminUserStatusRequest
+    ): Response<GrowfoneCodeEnvelope<AdminUserDto>>
+
+    @DELETE("admin/users/{id}")
+    suspend fun deleteAdminUser(
+        @Path("id") id: String
+    ): Response<GrowfoneCodeEnvelope<Any?>>
+
+    @GET("admin/users/{id}/calls")
+    suspend fun getAdminUserCalls(
+        @Path("id") id: String,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+        @Query("direction") direction: String? = null,
+        @Query("status") status: String? = null,
+        @Query("search") search: String? = null,
+        @Query("per_page") perPage: Int? = 15,
+        @Query("page") page: Int? = 1
+    ): Response<GrowfoneCodeEnvelope<AdminCallsDataDto>>
+
+    // Numbers
+    @GET("admin/numbers")
+    suspend fun getAdminNumbers(
+        @Query("status") status: Int? = null,
+        @Query("search") search: String? = null,
+        @Query("is_assigned") isAssigned: Boolean? = null,
+        @Query("per_page") perPage: Int? = 15,
+        @Query("page") page: Int? = 1
+    ): Response<GrowfoneCodeEnvelope<PagedDataDto<AdminNumberDto>>>
+
+    @POST("admin/numbers/purchase")
+    suspend fun purchaseAdminNumbers(
+        @Body req: PurchaseAdminNumbersRequest
+    ): Response<GrowfoneCodeEnvelope<PurchaseResultDto>>
+
+    @POST("admin/numbers/{id}/assign")
+    suspend fun assignAdminNumber(
+        @Path("id") id: String,
+        @Body req: AssignNumberRequest
+    ): Response<GrowfoneCodeEnvelope<AdminNumberDto>>
+
+    @POST("admin/numbers/{id}/unassign")
+    suspend fun unassignAdminNumber(
+        @Path("id") id: String
+    ): Response<GrowfoneCodeEnvelope<AdminNumberDto>>
+
+    @POST("admin/numbers/{id}/release")
+    suspend fun releaseAdminNumber(
+        @Path("id") id: String,
+        @Body req: ReleaseNumberRequest
+    ): Response<GrowfoneCodeEnvelope<AdminNumberDto>>
+
+    @POST("admin/numbers/bulk-unassign")
+    suspend fun bulkUnassignNumbers(
+        @Body req: BulkUnassignNumbersRequest
+    ): Response<GrowfoneCodeEnvelope<BulkUnassignResultDto>>
+
+    @POST("admin/numbers/bulk-release")
+    suspend fun bulkReleaseNumbers(
+        @Body req: BulkReleaseNumbersRequest
+    ): Response<GrowfoneCodeEnvelope<BulkReleaseResultDto>>
+
+    @POST("admin/numbers/sync")
+    suspend fun syncAdminNumbers(): Response<GrowfoneCodeEnvelope<SyncNumbersResultDto>>
+
+    // Analytics
+    @GET("admin/analytics/overview")
+    suspend fun getAdminAnalyticsOverview(
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null
+    ): Response<GrowfoneCodeEnvelope<AnalyticsOverviewDto>>
+
+    @GET("admin/analytics/users")
+    suspend fun getAdminAnalyticsUsers(
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+        @Query("sort") sort: String? = null,
+        @Query("order") order: String? = null,
+        @Query("per_page") perPage: Int? = 15,
+        @Query("page") page: Int? = 1
+    ): Response<GrowfoneCodeEnvelope<PagedDataDto<UserMetricDto>>>
+
+    // Feedback
+    @GET("admin/feedback")
+    suspend fun getAdminFeedback(
+        @Query("status") status: String? = null,
+        @Query("priority") priority: String? = null,
+        @Query("type") type: String? = null,
+        @Query("user_id") userId: String? = null,
+        @Query("answered") answered: Boolean? = null,
+        @Query("search") search: String? = null,
+        @Query("per_page") perPage: Int? = 15,
+        @Query("page") page: Int? = 1
+    ): Response<GrowfoneCodeEnvelope<PagedDataDto<AdminFeedbackDto>>>
+
+    @POST("admin/feedback/{id}/answer")
+    suspend fun answerAdminFeedback(
+        @Path("id") id: String,
+        @Body req: AdminFeedbackAnswerRequest
+    ): Response<GrowfoneCodeEnvelope<AdminFeedbackDto>>
+
+    // Contacts
+    @GET("admin/contacts/summary")
+    suspend fun getAdminContactsSummary(): Response<GrowfoneCodeEnvelope<ContactsSummaryDto>>
+
+    @GET("admin/contacts")
+    suspend fun getAdminContacts(
+        @Query("user_id") userId: String? = null,
+        @Query("search") search: String? = null,
+        @Query("per_page") perPage: Int? = 15,
+        @Query("page") page: Int? = 1
+    ): Response<GrowfoneCodeEnvelope<PagedDataDto<AdminContactDto>>>
 }

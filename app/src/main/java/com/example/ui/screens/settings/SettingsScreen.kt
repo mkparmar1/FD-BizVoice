@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DarkMode
@@ -78,6 +79,7 @@ fun SettingsScreen(
     onNavigateToPermissions: () -> Unit,
     onNavigateToBackendConfig: () -> Unit,
     onNavigateToAbout: () -> Unit,
+    onNavigateToAdminConsole: () -> Unit = {},
     onLogoutComplete: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -255,6 +257,28 @@ fun SettingsScreen(
                     onClick = onNavigateToPermissions,
                     testTag = "settings_permissions_row"
                 )
+            }
+        }
+
+        // SECTION: Administration (Only visible to Admin / Super Admin)
+        if (currentUser?.roleSlug == "admin" || currentUser?.roleSlug == "super-admin" || sessionManager.isAdmin()) {
+            Spacer(modifier = Modifier.height(20.dp))
+            SettingsSectionHeader("ADMINISTRATION")
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    SettingsNavRow(
+                        icon = Icons.Default.AdminPanelSettings,
+                        title = "Admin Console",
+                        subtitle = "Team members, Phone Numbers, Analytics, Feedback & Sync",
+                        onClick = onNavigateToAdminConsole,
+                        testTag = "settings_admin_console_row"
+                    )
+                }
             }
         }
 

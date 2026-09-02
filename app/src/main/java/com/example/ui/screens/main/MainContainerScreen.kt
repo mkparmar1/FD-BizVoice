@@ -53,6 +53,7 @@ fun MainContainerScreen(
     onNavigateToPermissions: () -> Unit,
     onNavigateToBackendConfig: () -> Unit,
     onNavigateToAbout: () -> Unit,
+    onNavigateToAdminConsole: () -> Unit = {},
     onLogoutComplete: () -> Unit
 ) {
     var currentTab by remember { mutableStateOf(MainTab.DIALER) }
@@ -144,6 +145,7 @@ fun MainContainerScreen(
                         onNavigateToPermissions = onNavigateToPermissions,
                         onNavigateToBackendConfig = onNavigateToBackendConfig,
                         onNavigateToAbout = onNavigateToAbout,
+                        onNavigateToAdminConsole = onNavigateToAdminConsole,
                         onLogoutComplete = onLogoutComplete
                     )
                 }
