@@ -179,6 +179,21 @@ fun BizVoiceNavigation(appContainer: BizVoiceAppContainer) {
                 onNavigateToAdminConsole = {
                     navController.navigate(Screen.AdminConsole.route)
                 },
+                onNavigateToAdminUsers = {
+                    navController.navigate(Screen.AdminUsers.route)
+                },
+                onNavigateToAdminNumbers = {
+                    navController.navigate(Screen.AdminNumbers.route)
+                },
+                onNavigateToAdminAnalytics = {
+                    navController.navigate(Screen.AdminAnalytics.route)
+                },
+                onNavigateToAdminFeedback = {
+                    navController.navigate(Screen.AdminFeedback.route)
+                },
+                onNavigateToAdminContacts = {
+                    navController.navigate(Screen.AdminContacts.route)
+                },
                 onLogoutComplete = {
                     navController.navigate(Screen.Login.route) {
                         popUpTo(0) { inclusive = true }

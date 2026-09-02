@@ -9,10 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.material3.Surface
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.History
@@ -21,21 +19,27 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.BizVoiceAppContainer
 import com.example.data.model.CallDirection
 import com.example.telephony.CallState
 import com.example.ui.navigation.MainTab
+import com.example.ui.screens.admin.AdminConsoleScreen
 import com.example.ui.screens.calls.ActiveCallScreen
 import com.example.ui.screens.calls.IncomingCallScreen
 import com.example.ui.screens.contacts.ContactsScreen
@@ -54,12 +58,31 @@ fun MainContainerScreen(
     onNavigateToBackendConfig: () -> Unit,
     onNavigateToAbout: () -> Unit,
     onNavigateToAdminConsole: () -> Unit = {},
+    onNavigateToAdminUsers: () -> Unit = {},
+    onNavigateToAdminNumbers: () -> Unit = {},
+    onNavigateToAdminAnalytics: () -> Unit = {},
+    onNavigateToAdminFeedback: () -> Unit = {},
+    onNavigateToAdminContacts: () -> Unit = {},
     onLogoutComplete: () -> Unit
 ) {
     var currentTab by remember { mutableStateOf(MainTab.DIALER) }
     val activeCall by appContainer.callManager.activeCallFlow.collectAsState()
+    val currentUser by appContainer.repository.currentUserFlow.collectAsState()
+    val isAdminRole by appContainer.repository.isAdminFlow.collectAsState()
 
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+    val isUserAdmin = isAdminRole ||
+            currentUser?.roleSlug == "admin" ||
+            currentUser?.roleSlug == "super-admin" ||
+            currentUser?.role?.lowercase()?.contains("admin") == true ||
+            appContainer.sessionManager.isAdmin()
+
+    LaunchedEffect(isUserAdmin) {
+        if (!isUserAdmin && currentTab == MainTab.ADMIN) {
+            currentTab = MainTab.DIALER
+        }
+    }
+
+    LaunchedEffect(Unit) {
         appContainer.repository.refreshAssignedPhoneNumber()
     }
 
@@ -74,7 +97,7 @@ fun MainContainerScreen(
                     tonalElevation = 0.dp,
                     modifier = Modifier.testTag("main_bottom_nav")
                 ) {
-                    val navItemColors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                    val navItemColors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         indicatorColor = MaterialTheme.colorScheme.primaryContainer,
@@ -86,7 +109,7 @@ fun MainContainerScreen(
                         selected = currentTab == MainTab.DIALER,
                         onClick = { currentTab = MainTab.DIALER },
                         icon = { Icon(Icons.Default.Dialpad, contentDescription = "Keypad") },
-                        label = { Text("Keypad", fontWeight = if (currentTab == MainTab.DIALER) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium) },
+                        label = { Text("Keypad", fontWeight = if (currentTab == MainTab.DIALER) FontWeight.Bold else FontWeight.Medium) },
                         colors = navItemColors,
                         modifier = Modifier.testTag("nav_item_dialer")
                     )
@@ -94,7 +117,7 @@ fun MainContainerScreen(
                         selected = currentTab == MainTab.RECENTS,
                         onClick = { currentTab = MainTab.RECENTS },
                         icon = { Icon(Icons.Default.History, contentDescription = "Recents") },
-                        label = { Text("Recents", fontWeight = if (currentTab == MainTab.RECENTS) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium) },
+                        label = { Text("Recents", fontWeight = if (currentTab == MainTab.RECENTS) FontWeight.Bold else FontWeight.Medium) },
                         colors = navItemColors,
                         modifier = Modifier.testTag("nav_item_recents")
                     )
@@ -102,15 +125,25 @@ fun MainContainerScreen(
                         selected = currentTab == MainTab.CONTACTS,
                         onClick = { currentTab = MainTab.CONTACTS },
                         icon = { Icon(Icons.Default.Contacts, contentDescription = "Contacts") },
-                        label = { Text("Contacts", fontWeight = if (currentTab == MainTab.CONTACTS) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium) },
+                        label = { Text("Contacts", fontWeight = if (currentTab == MainTab.CONTACTS) FontWeight.Bold else FontWeight.Medium) },
                         colors = navItemColors,
                         modifier = Modifier.testTag("nav_item_contacts")
                     )
+                    if (isUserAdmin) {
+                        NavigationBarItem(
+                            selected = currentTab == MainTab.ADMIN,
+                            onClick = { currentTab = MainTab.ADMIN },
+                            icon = { Icon(Icons.Default.AdminPanelSettings, contentDescription = "Admin") },
+                            label = { Text("Admin", fontWeight = if (currentTab == MainTab.ADMIN) FontWeight.Bold else FontWeight.Medium) },
+                            colors = navItemColors,
+                            modifier = Modifier.testTag("nav_item_admin")
+                        )
+                    }
                     NavigationBarItem(
                         selected = currentTab == MainTab.SETTINGS,
                         onClick = { currentTab = MainTab.SETTINGS },
                         icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                        label = { Text("Settings", fontWeight = if (currentTab == MainTab.SETTINGS) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium) },
+                        label = { Text("Settings", fontWeight = if (currentTab == MainTab.SETTINGS) FontWeight.Bold else FontWeight.Medium) },
                         colors = navItemColors,
                         modifier = Modifier.testTag("nav_item_settings")
                     )
@@ -138,6 +171,16 @@ fun MainContainerScreen(
                         callManager = appContainer.callManager,
                         onNavigateToContactDetail = onNavigateToContactDetail,
                         onNavigateToAddContact = onNavigateToAddContact
+                    )
+                    MainTab.ADMIN -> AdminConsoleScreen(
+                        repository = appContainer.repository,
+                        onNavigateBack = { currentTab = MainTab.DIALER },
+                        onNavigateToUsers = onNavigateToAdminUsers,
+                        onNavigateToNumbers = onNavigateToAdminNumbers,
+                        onNavigateToAnalytics = onNavigateToAdminAnalytics,
+                        onNavigateToFeedback = onNavigateToAdminFeedback,
+                        onNavigateToContacts = onNavigateToAdminContacts,
+                        isTabRoot = true
                     )
                     MainTab.SETTINGS -> SettingsScreen(
                         repository = appContainer.repository,

@@ -36,5 +36,6 @@ enum class MainTab(val title: String) {
     DIALER("Keypad"),
     RECENTS("Recents"),
     CONTACTS("Contacts"),
+    ADMIN("Admin"),
     SETTINGS("Settings")
 }

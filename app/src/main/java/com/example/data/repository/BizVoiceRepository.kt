@@ -1623,6 +1623,32 @@ class BizVoiceRepository(
         }
     }
 
+    suspend fun syncTwilioBalanceAndAccount(): Result<TwilioSyncResultDto> = withContext(Dispatchers.IO) {
+        try {
+            val creditsRes = getCredits()
+            val numbersRes = syncAdminNumbers()
+            try {
+                getTwilioToken(forceRefresh = true)
+            } catch (_: Exception) {}
+            try {
+                getAdminAnalyticsOverview()
+            } catch (_: Exception) {}
+
+            val freshCredits = creditsRes.getOrDefault(sessionManager.getCurrentUser()?.credits ?: 0)
+            val numData = numbersRes.getOrNull()
+            Result.success(
+                TwilioSyncResultDto(
+                    credits = freshCredits,
+                    syncedNumbers = numData?.synced ?: 0,
+                    markedReleased = numData?.markedReleased ?: 0,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     // Analytics
     suspend fun getAdminAnalyticsOverview(from: String? = null, to: String? = null): Result<AnalyticsOverviewDto> = withContext(Dispatchers.IO) {
         try {

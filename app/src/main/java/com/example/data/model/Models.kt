@@ -1337,6 +1337,14 @@ data class SyncNumbersResultDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class TwilioSyncResultDto(
+    val credits: Int = 0,
+    val syncedNumbers: Int = 0,
+    val markedReleased: Int = 0,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+@JsonClass(generateAdapter = true)
 data class AnalyticsRangeDto(
     val from: String? = "",
     val to: String? = ""

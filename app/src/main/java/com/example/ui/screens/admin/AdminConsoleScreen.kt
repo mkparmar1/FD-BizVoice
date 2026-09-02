@@ -1,6 +1,12 @@
 package com.example.ui.screens.admin
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Group
@@ -31,6 +38,8 @@ import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,6 +47,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -49,6 +59,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,6 +67,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -67,30 +80,48 @@ import com.example.data.repository.BizVoiceRepository
 import com.example.ui.theme.CallGreen
 import com.example.ui.theme.ModernPrimary
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminConsoleScreen(
     repository: BizVoiceRepository,
-    onNavigateBack: () -> Unit,
+    onNavigateBack: () -> Unit = {},
     onNavigateToUsers: () -> Unit,
     onNavigateToNumbers: () -> Unit,
     onNavigateToAnalytics: () -> Unit,
     onNavigateToFeedback: () -> Unit,
-    onNavigateToContacts: () -> Unit
+    onNavigateToContacts: () -> Unit,
+    isTabRoot: Boolean = false
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val currentUser by repository.currentUserFlow.collectAsState()
 
     var isLoading by remember { mutableStateOf(true) }
+    var isTwilioSyncing by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var overview by remember { mutableStateOf<AnalyticsOverviewDto?>(null) }
+    var lastSyncTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "sync_rotation")
+    val syncRotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "sync_rotation_anim"
+    )
 
     fun refreshOverview() {
         scope.launch {
             isLoading = true
             errorMessage = null
+            repository.getCredits()
             val result = repository.getAdminAnalyticsOverview()
             isLoading = false
             if (result.isSuccess) {
@@ -98,6 +129,30 @@ fun AdminConsoleScreen(
             } else {
                 val err = result.exceptionOrNull()?.localizedMessage ?: "Failed to load dashboard metrics"
                 errorMessage = err
+            }
+        }
+    }
+
+    fun syncTwilio() {
+        scope.launch {
+            isTwilioSyncing = true
+            val syncResult = repository.syncTwilioBalanceAndAccount()
+            isTwilioSyncing = false
+            if (syncResult.isSuccess) {
+                val summary = syncResult.getOrNull()
+                lastSyncTime = System.currentTimeMillis()
+                val freshCredits = summary?.credits ?: (currentUser?.credits ?: 0)
+                val syncedNumbers = summary?.syncedNumbers ?: 0
+                snackbarHostState.showSnackbar(
+                    "Twilio Synced: Real balance updated (${freshCredits} credits) • $syncedNumbers numbers verified"
+                )
+                val overviewResult = repository.getAdminAnalyticsOverview()
+                if (overviewResult.isSuccess) {
+                    overview = overviewResult.getOrNull()
+                }
+            } else {
+                val err = syncResult.exceptionOrNull()?.localizedMessage ?: "Twilio sync failed. Please check network."
+                snackbarHostState.showSnackbar(err)
             }
         }
     }
@@ -111,10 +166,12 @@ fun AdminConsoleScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(
-                            text = "Admin Console",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Admin Console",
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
                         Text(
                             text = currentUser?.company ?: "Enterprise Dashboard",
                             style = MaterialTheme.typography.bodySmall,
@@ -123,17 +180,48 @@ fun AdminConsoleScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        modifier = Modifier.testTag("admin_back_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
+                    if (isTabRoot) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier
+                                .padding(start = 12.dp, end = 4.dp)
+                                .size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.AdminPanelSettings,
+                                    contentDescription = "Admin Console",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        IconButton(
+                            onClick = onNavigateBack,
+                            modifier = Modifier.testTag("admin_back_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { syncTwilio() },
+                        enabled = !isTwilioSyncing,
+                        modifier = Modifier.testTag("admin_sync_twilio_top_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Sync,
+                            contentDescription = "Sync Twilio Balance",
+                            tint = if (isTwilioSyncing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            modifier = if (isTwilioSyncing) Modifier.rotate(syncRotation) else Modifier
+                        )
+                    }
                     IconButton(
                         onClick = { refreshOverview() },
                         modifier = Modifier.testTag("admin_refresh_button")
@@ -160,43 +248,163 @@ fun AdminConsoleScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Header Card
+            // Twilio Real Balance & Voice Gateway Hero Card
             item {
                 Card(
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(24.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("twilio_balance_card")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(18.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp)
                     ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(44.dp)
+                        // Header Row: Twilio Voice Gateway Status Badge + Live indicator
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(CallGreen)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "TWILIO VOICE ENGINE",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = Icons.Default.Security,
+                                    imageVector = Icons.Default.CheckCircle,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(24.dp)
+                                    tint = CallGreen,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Connected",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                    color = CallGreen
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column {
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Real Twilio Balance Presentation
+                        val currentCredits = currentUser?.credits ?: 0
+                        val formattedBalance = String.format(Locale.US, "$%.2f", currentCredits / 100.0)
+
+                        Text(
+                            text = "Twilio Real Balance",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(
+                                    text = formattedBalance,
+                                    style = MaterialTheme.typography.headlineLarge.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = (-0.5).sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.testTag("twilio_real_balance_text")
+                                )
+                                Text(
+                                    text = "$currentCredits VoIP Calling Credits Available",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+
+                            // Sync Twilio Button
+                            Button(
+                                onClick = { syncTwilio() },
+                                enabled = !isTwilioSyncing,
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                ),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                modifier = Modifier.testTag("sync_twilio_balance_button")
+                            ) {
+                                if (isTwilioSyncing) {
+                                    CircularProgressIndicator(
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Syncing...",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Sync,
+                                        contentDescription = "Sync",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Sync",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                        androidx.compose.material3.HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Footer with Last Sync Timestamp & Account detail
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+                            val formattedTime = timeFormat.format(Date(lastSyncTime))
                             Text(
-                                text = "Organization Control",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSurface
+                                text = "Last synced: $formattedTime",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+
                             Text(
-                                text = "Signed in as ${currentUser?.role ?: "Administrator"}",
-                                style = MaterialTheme.typography.bodySmall,
+                                text = "VoIP Live Billing",
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -210,7 +418,7 @@ fun AdminConsoleScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(100.dp),
+                            .height(90.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(32.dp))
@@ -230,9 +438,9 @@ fun AdminConsoleScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             AdminStatCard(
-                                title = "Total Minutes",
-                                value = String.format("%.0f", overview!!.totals?.totalMinutes ?: 0.0),
-                                subtitle = "VoIP usage",
+                                title = "VoIP Usage",
+                                value = "${String.format(Locale.US, "%.0f", overview!!.totals?.totalMinutes ?: 0.0)}m",
+                                subtitle = "Active minutes",
                                 icon = Icons.Default.Analytics,
                                 color = CallGreen,
                                 modifier = Modifier.weight(1f)
@@ -248,7 +456,7 @@ fun AdminConsoleScreen(
                     text = "MANAGEMENT MODULES",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                    modifier = Modifier.padding(start = 4.dp, top = 4.dp)
                 )
             }
 
@@ -270,7 +478,7 @@ fun AdminConsoleScreen(
                         AdminDivider()
                         AdminModuleRow(
                             icon = Icons.Default.Phone,
-                            title = "Phone Numbers",
+                            title = "Phone Numbers & Twilio Inventory",
                             subtitle = "Inventory, user assignments, release & sync",
                             onClick = onNavigateToNumbers,
                             testTag = "admin_numbers_module_btn"
@@ -419,3 +627,4 @@ fun AdminDivider() {
         color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
     )
 }
+
