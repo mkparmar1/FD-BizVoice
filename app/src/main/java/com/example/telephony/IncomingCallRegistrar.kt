@@ -50,6 +50,8 @@ class IncomingCallRegistrar(
     private var registeredIdentity: String? = null
     private var registeredToken: String? = null
     private var registeredFcmToken: String? = null
+    /** Identity of the registration in flight; the SDK callbacks do not report it. */
+    @Volatile private var pendingIdentity: String? = null
     private var lastRegisteredAt: Long = 0L
 
     /** The current FCM token, or null when Firebase is not configured or unreachable. */
@@ -86,30 +88,31 @@ class IncomingCallRegistrar(
     }
 
     private val registrationListener = object : RegistrationListener {
-        override fun onRegistered(token: String, identity: String) {
+        // Twilio passes (accessToken, fcmToken) here, not an identity.
+        override fun onRegistered(accessToken: String, fcmToken: String) {
             isRegistered.set(true)
-            registeredIdentity = identity
+            registeredIdentity = pendingIdentity
             lastRegisteredAt = System.currentTimeMillis()
-            Log.i(TAG, "Voice.register OK for identity=$identity")
+            Log.i(TAG, "Voice.register OK for identity=$pendingIdentity")
         }
 
-        override fun onError(error: RegistrationException, token: String, identity: String) {
+        override fun onError(error: RegistrationException, accessToken: String, fcmToken: String) {
             isRegistered.set(false)
             Log.e(
                 TAG,
-                "Voice.register FAILED identity=$identity code=${error.errorCode} " +
+                "Voice.register FAILED identity=$pendingIdentity code=${error.errorCode} " +
                     "message=${error.message} explanation=${error.explanation}"
             )
         }
     }
 
     private val unregistrationListener = object : UnregistrationListener {
-        override fun onUnregistered(token: String, identity: String) {
-            Log.i(TAG, "Voice.unregister OK for identity=$identity")
+        override fun onUnregistered(accessToken: String, fcmToken: String) {
+            Log.i(TAG, "Voice.unregister OK")
         }
 
-        override fun onError(error: RegistrationException, token: String, identity: String) {
-            Log.w(TAG, "Voice.unregister FAILED identity=$identity code=${error.errorCode}")
+        override fun onError(error: RegistrationException, accessToken: String, fcmToken: String) {
+            Log.w(TAG, "Voice.unregister FAILED code=${error.errorCode}")
         }
     }
 
@@ -159,6 +162,7 @@ class IncomingCallRegistrar(
                 }
                 repository.sessionManager.devicePushToken = fcmToken
 
+                pendingIdentity = tokenData.identity
                 Log.i(TAG, "Registering device for identity=${tokenData.identity}")
                 withContext(Dispatchers.IO) {
                     Voice.register(
