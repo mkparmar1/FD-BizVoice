@@ -3,6 +3,7 @@ package com.example.telephony
 import android.content.Context
 import android.util.Log
 import com.example.data.repository.BizVoiceRepository
+import com.google.firebase.messaging.FirebaseMessaging
 import com.twilio.voice.CallException
 import com.twilio.voice.CallInvite
 import com.twilio.voice.CancelledCallInvite
@@ -14,8 +15,10 @@ import com.twilio.voice.Voice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
 
 /**
  * Registers this device with Twilio Voice so inbound `<Client>` legs can reach it.
@@ -46,7 +49,25 @@ class IncomingCallRegistrar(
     private val inFlight = AtomicBoolean(false)
     private var registeredIdentity: String? = null
     private var registeredToken: String? = null
+    private var registeredFcmToken: String? = null
     private var lastRegisteredAt: Long = 0L
+
+    /** The current FCM token, or null when Firebase is not configured or unreachable. */
+    private suspend fun fetchFcmToken(): String? = try {
+        suspendCancellableCoroutine { cont ->
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                if (!task.isSuccessful) {
+                    Log.e(TAG, "FCM token fetch failed: ${task.exception?.message}")
+                }
+                cont.resume(if (task.isSuccessful) task.result else null)
+            }
+        }
+    } catch (e: Exception) {
+        // FirebaseMessaging.getInstance() throws when no FirebaseApp was initialised,
+        // which is what a build without google-services.json produces.
+        Log.e(TAG, "FCM unavailable: ${e.message}")
+        null
+    }
 
     private val messageListener = object : MessageListener {
         override fun onCallInvite(callInvite: CallInvite) {
@@ -128,16 +149,27 @@ class IncomingCallRegistrar(
                     return@launch
                 }
 
+                // Voice.register's third argument is the FCM device token Twilio pushes the
+                // CallInvite to. Passing the identity there registered a push address that
+                // does not exist, so every inbound leg stalled at "initiated".
+                val fcmToken = fetchFcmToken()
+                if (fcmToken.isNullOrBlank()) {
+                    Log.e(TAG, "Cannot register, no FCM token (is google-services.json in the build?)")
+                    return@launch
+                }
+                repository.sessionManager.devicePushToken = fcmToken
+
                 Log.i(TAG, "Registering device for identity=${tokenData.identity}")
                 withContext(Dispatchers.IO) {
                     Voice.register(
                         tokenData.token,
                         Voice.RegistrationChannel.FCM,
-                        tokenData.identity,
+                        fcmToken,
                         registrationListener
                     )
                 }
                 registeredToken = tokenData.token
+                registeredFcmToken = fcmToken
             } catch (e: Exception) {
                 Log.e(TAG, "registerForIncomingCalls threw: ${e.message}", e)
             } finally {
@@ -150,17 +182,19 @@ class IncomingCallRegistrar(
      * Unregisters the device, e.g. on logout, so the identity stops receiving calls.
      */
     fun unregisterFromIncomingCalls() {
-        val identity = registeredIdentity
+        val accessToken = registeredToken
+        val fcmToken = registeredFcmToken
         registeredToken = null
+        registeredFcmToken = null
         registeredIdentity = null
         lastRegisteredAt = 0L
         isRegistered.set(false)
-        if (identity.isNullOrBlank()) return
+        if (accessToken.isNullOrBlank() || fcmToken.isNullOrBlank()) return
 
         scope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    Voice.unregister(identity, Voice.RegistrationChannel.FCM, identity, unregistrationListener)
+                    Voice.unregister(accessToken, Voice.RegistrationChannel.FCM, fcmToken, unregistrationListener)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "unregisterFromIncomingCalls threw: ${e.message}", e)
