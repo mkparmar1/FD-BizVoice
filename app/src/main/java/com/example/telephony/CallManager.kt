@@ -1,5 +1,6 @@
 package com.example.telephony
 
+import android.widget.Toast
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioManager
@@ -192,6 +193,16 @@ class CallManager(
         val cleanNumber = formattedNumber.trim()
         if (cleanNumber.length < 3) {
             return Result.failure(Exception("Please enter a valid phone number."))
+        }
+
+        // Dialing your own business number rings this same device back through Twilio
+        // and can never connect.
+        val ownNumber = repository.sessionManager.currentUserFlow.value?.assignedPhoneNumber
+        if (!ownNumber.isNullOrBlank() && ownNumber.filter(Char::isDigit) == cleanNumber.filter(Char::isDigit)) {
+            val message = "You can't call your own number."
+            // Contacts and Recents ignore the Result, so tell the user here as well.
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            return Result.failure(Exception(message))
         }
 
         // Cancel any pending tones & timer

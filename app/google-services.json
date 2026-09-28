@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "759937054089",
-    "project_id": "xibo-70bdd",
-    "storage_bucket": "xibo-70bdd.firebasestorage.app"
+    "project_number": "769963867421",
+    "project_id": "bizvoice-41ffa",
+    "storage_bucket": "bizvoice-41ffa.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:759937054089:android:140855f7eca4bb144e5d58",
+        "mobilesdk_app_id": "1:769963867421:android:4f8c61fe742befb557b5f4",
         "android_client_info": {
           "package_name": "com.bizvoice.app"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDT6M7YY-c-m3h9AoELHNA3g_66E2CG0Ss"
+          "current_key": "AIzaSyA9LvsiHOuutDtCsyi0j1UVstg4uTMxP3M"
         }
       ],
       "services": {
