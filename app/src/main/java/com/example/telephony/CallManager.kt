@@ -12,6 +12,8 @@ import com.example.data.model.CallDirection
 import com.example.data.model.CallRecord
 import com.example.data.model.CallRecordStatus
 import com.example.data.repository.BizVoiceRepository
+import com.twilio.voice.CallInvite
+import com.twilio.voice.CancelledCallInvite
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,13 +31,14 @@ import java.util.UUID
  */
 class CallManager(
     private val context: Context,
-    private val repository: BizVoiceRepository
+    private val repository: BizVoiceRepository,
+    externalScope: CoroutineScope? = null
 ) {
     companion object {
         private const val TAG = "CALL_MANAGER"
     }
 
-    private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val scope = externalScope ?: CoroutineScope(Dispatchers.Main + Job())
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private val voiceClientManager = TwilioVoiceClientManager(context, repository, scope)
 
@@ -54,6 +57,23 @@ class CallManager(
     }
 
     private var incomingRingtone: Ringtone? = null
+
+    // The live Twilio CallInvite for an inbound call, held until the user answers or
+    // declines. Null for outbound calls and for the simulated incoming-call path.
+    private var pendingCallInvite: CallInvite? = null
+
+    // False while a ringing notification is presenting the call, so the notification
+    // channel and the local ringtone do not play at the same time.
+    private var ringtoneAudible = true
+
+    /**
+     * Chooses who plays the ringtone for inbound calls. The FCM service turns this off
+     * when the app is backgrounded and posts a notification instead.
+     */
+    fun setRingingAudible(audible: Boolean) {
+        ringtoneAudible = audible
+        if (!audible) stopAllRingingAndTones()
+    }
 
     private val _activeCallFlow = MutableStateFlow(ActiveCallInfo())
     val activeCallFlow: StateFlow<ActiveCallInfo> = _activeCallFlow.asStateFlow()
@@ -94,7 +114,12 @@ class CallManager(
                     statusTitle = "Ringing...",
                     statusSubtitle = null
                 )
-                startOutgoingRingbackLoop()
+                // Only the caller side plays ringback locally. On an answered inbound
+                // call the PSTN caller already hears Twilio's ringback, so playing it
+                // here would double it up.
+                if (_activeCallFlow.value.direction == CallDirection.OUTGOING) {
+                    startOutgoingRingbackLoop()
+                }
             }
 
             override fun onConnected(sessionId: String) {
@@ -306,7 +331,67 @@ class CallManager(
         }
     }
 
-    fun triggerIncomingCall(phoneNumber: String, callerName: String? = null) {
+    /**
+     * Entry point for a real inbound call. Invoked by [IncomingCallRegistrar] when the
+     * Twilio SDK hands over a CallInvite from the FCM push, which only happens after the
+     * device has been registered with Voice.register().
+     */
+    fun onIncomingCallInvite(callInvite: CallInvite) {
+        Log.i(TAG, "onIncomingCallInvite sid=${callInvite.callSid} from=${callInvite.from}")
+
+        // A second invite while one is already ringing means the previous leg was never
+        // answered; drop it so Twilio stops holding the caller open.
+        pendingCallInvite?.let { stale ->
+            try {
+                stale.reject(context)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to reject superseded invite: ${e.message}")
+            }
+        }
+
+        pendingCallInvite = callInvite
+        beginRinging(
+            phoneNumber = callInvite.from ?: "",
+            callerName = callInvite.customParameters?.get("CallerName")
+        )
+    }
+
+    /**
+     * The caller hung up before the user answered. Twilio sends this as a cancellation
+     * push, so the ringing UI must be torn down or the app rings at nobody.
+     */
+    fun onIncomingCallCancelled(cancelled: CancelledCallInvite) {
+        Log.i(TAG, "onIncomingCallCancelled sid=${cancelled.callSid}")
+        val current = _activeCallFlow.value
+        if (current.state != CallState.RINGING || current.direction != CallDirection.INCOMING) return
+
+        pendingCallInvite = null
+        stopAllRingingAndTones()
+        autoDismissJob?.cancel()
+
+        saveCallRecord(
+            status = CallRecordStatus.CANCELED,
+            direction = CallDirection.INCOMING,
+            duration = 0
+        )
+
+        _activeCallFlow.value = current.copy(
+            state = CallState.ENDED,
+            statusTitle = "Missed Call",
+            statusSubtitle = "Caller hung up"
+        )
+
+        scope.launch {
+            delay(1500)
+            resetCallState(CallState.IDLE)
+        }
+    }
+
+    /**
+     * Moves the UI into the ringing state. Shared by the real CallInvite path and the
+     * simulated incoming path.
+     */
+    private fun beginRinging(phoneNumber: String, callerName: String?) {
         stopAllRingingAndTones()
         timerJob?.cancel()
         autoDismissJob?.cancel()
@@ -332,6 +417,11 @@ class CallManager(
         startIncomingRingingLoop()
     }
 
+    fun triggerIncomingCall(phoneNumber: String, callerName: String? = null) {
+        Log.w(TAG, "triggerIncomingCall is a simulated incoming call; no real Twilio leg is attached")
+        beginRinging(phoneNumber, callerName)
+    }
+
     fun acceptIncomingCall() {
         val current = _activeCallFlow.value
         if (current.state != CallState.RINGING && current.state != CallState.PREPARING) return
@@ -339,25 +429,55 @@ class CallManager(
         stopAllRingingAndTones()
         autoDismissJob?.cancel()
 
-        _activeCallFlow.value = current.copy(
-            state = CallState.CONNECTED,
-            statusTitle = null,
-            statusSubtitle = null,
-            startTime = System.currentTimeMillis()
-        )
-
         try {
             audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
             voiceClientManager.setSpeakerphoneOn(current.isSpeaker)
         } catch (_: Exception) {}
 
-        startCallTimer()
+        val invite = pendingCallInvite
+        if (invite == null) {
+            // Simulated incoming call with no Twilio leg behind it: keep the previous
+            // behaviour so the debug path still shows a connected call.
+            _activeCallFlow.value = current.copy(
+                state = CallState.CONNECTED,
+                statusTitle = null,
+                statusSubtitle = null,
+                startTime = System.currentTimeMillis()
+            )
+            startCallTimer()
+            return
+        }
+
+        // Real call: bridging only happens once CallInvite.accept() is invoked.
+        _activeCallFlow.value = current.copy(
+            state = CallState.CALLING,
+            statusTitle = "Connecting...",
+            statusSubtitle = null
+        )
+
+        voiceClientManager.acceptIncoming(invite) { result ->
+            result.onFailure { error ->
+                Log.e(TAG, "acceptIncoming failed: ${error.message}")
+                pendingCallInvite = null
+                handleConnectFailure(
+                    DisconnectReason(
+                        title = "Unable to Answer Call",
+                        userFriendlyMessage = error.message ?: "Could not connect to the incoming call."
+                    )
+                )
+            }
+        }
     }
 
     fun declineIncomingCall() {
         val current = _activeCallFlow.value
         stopAllRingingAndTones()
         autoDismissJob?.cancel()
+
+        pendingCallInvite?.let { invite ->
+            voiceClientManager.rejectIncoming(invite)
+            pendingCallInvite = null
+        }
 
         saveCallRecord(
             status = CallRecordStatus.NO_ANSWER,
@@ -455,6 +575,7 @@ class CallManager(
 
         if (current.state == CallState.IDLE) return
 
+        pendingCallInvite = null
         _activeCallFlow.value = current.copy(
             state = CallState.ENDING,
             statusTitle = "Ending Call..."
@@ -492,6 +613,7 @@ class CallManager(
         stopAllRingingAndTones()
         timerJob?.cancel()
         autoDismissJob?.cancel()
+        pendingCallInvite = null
         voiceClientManager.disconnect()
         _activeCallFlow.value = ActiveCallInfo(state = CallState.IDLE)
         restoreAudioSettings()
@@ -511,6 +633,9 @@ class CallManager(
     }
 
     private fun startIncomingRingingLoop() {
+        // When the app is backgrounded the ringing notification owns the sound, so the
+        // in-process ringtone is suppressed to avoid two overlapping ringbacks.
+        if (!ringtoneAudible) return
         ringingToneJob?.cancel()
         ringingToneJob = scope.launch {
             try {

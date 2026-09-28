@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.util.Base64
 import android.util.Log
 import com.example.data.local.BizVoiceDatabase
 import com.example.data.local.CallRecordEntity
@@ -27,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * Production Repository for BizVoice.
@@ -509,7 +511,10 @@ class BizVoiceRepository(
             if (authKey.isBlank()) {
                 val cachedToken = sessionManager.getTwilioVoiceToken()
                 if (!cachedToken.isNullOrBlank()) {
-                    val identity = sessionManager.getCurrentUser()?.email ?: "agent_user"
+                    val identity = identityFromToken(cachedToken)
+                    if (identity.isNullOrBlank()) {
+                        return@withContext Result.failure(Exception("Authentication required"))
+                    }
                     return@withContext Result.success(CapabilityTokenDto(identity = identity, token = cachedToken))
                 }
                 return@withContext Result.failure(Exception("Authentication required"))
@@ -526,12 +531,41 @@ class BizVoiceRepository(
         } catch (e: Exception) {
             val cachedToken = sessionManager.getTwilioVoiceToken()
             if (!forceRefresh && !cachedToken.isNullOrBlank()) {
-                val identity = sessionManager.getCurrentUser()?.email ?: "agent_user"
-                Result.success(CapabilityTokenDto(identity = identity, token = cachedToken))
+                val identity = identityFromToken(cachedToken)
+                if (identity.isNullOrBlank()) {
+                    Result.failure(e)
+                } else {
+                    Result.success(CapabilityTokenDto(identity = identity, token = cachedToken))
+                }
             } else {
                 Result.failure(e)
             }
         }
+    }
+
+    /**
+     * Reads grants.identity out of a Twilio access token.
+     *
+     * The backend derives the client identity as md5(user_devices.auth_key) and dials
+     * exactly that, so falling back to the user's email would register the device under
+     * an identity Twilio never dials and every inbound leg would fail with 480.
+     */
+    private fun identityFromToken(token: String): String? = try {
+        val parts = token.split(".")
+        if (parts.size < 2) {
+            null
+        } else {
+            val decoded = String(
+                Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP),
+                Charsets.UTF_8
+            )
+            JSONObject(decoded).optString("grants").let { grantsJson ->
+                if (grantsJson.isBlank()) null else JSONObject(grantsJson).optString("identity").ifBlank { null }
+            }
+        }
+    } catch (e: Exception) {
+        Log.w("BIZVOICE_REPO", "Could not decode identity from cached voice token: ${e.message}")
+        null
     }
 
     suspend fun getTwilioToken(forceRefresh: Boolean = false): Result<CapabilityTokenDto> = getCapabilityToken(forceRefresh)

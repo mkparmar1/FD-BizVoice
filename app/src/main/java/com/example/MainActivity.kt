@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,6 +44,7 @@ import com.example.ui.screens.settings.BackendConfigScreen
 import com.example.ui.screens.settings.PermissionsScreen
 import com.example.ui.screens.splash.SplashScreen
 import com.example.ui.theme.BizVoiceTheme
+import kotlinx.coroutines.flow.collect
 
 class MainActivity : ComponentActivity() {
 
@@ -50,7 +52,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        appContainer = BizVoiceAppContainer(applicationContext)
+        // Shared with the FCM service so a CallInvite arriving while backgrounded lands
+        // on the same CallManager this UI observes.
+        appContainer = BizVoiceApplication.container(applicationContext)
         enableEdgeToEdge()
 
         setContent {
@@ -94,6 +98,24 @@ fun BizVoiceNavigation(appContainer: BizVoiceAppContainer) {
         if (ungranted.isNotEmpty()) {
             permissionsLauncher.launch(ungranted.toTypedArray())
         }
+    }
+
+    // Register the device with Twilio as soon as there is a session to register, and keep
+    // isUiVisible accurate so backgrounded calls are announced by a notification instead
+    // of the in-process ringtone.
+    LaunchedEffect(Unit) {
+        appContainer.sessionManager.authStateFlow.collect { loggedIn ->
+            if (loggedIn) {
+                appContainer.incomingCallRegistrar.registerForIncomingCalls()
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        appContainer.isUiVisible = true
+        // The in-process ringtone is the right one whenever the UI can be seen.
+        appContainer.callManager.setRingingAudible(true)
+        onDispose { appContainer.isUiVisible = false }
     }
 
     // Automatically navigate to Login when 401 Unauthorized occurs

@@ -111,6 +111,9 @@ dependencies {
   // implementation(libs.androidx.credentials.play.services)
   // implementation(libs.googleid)
   implementation(libs.firebase.appcheck.recaptcha)
+  // Required for Twilio Voice incoming calls: Twilio delivers CallInvite payloads
+  // over FCM, and the device must be registered with Voice.register(..., FCM, ...).
+  implementation(libs.firebase.messaging)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.logging.interceptor)

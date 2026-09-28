@@ -298,8 +298,10 @@ class SessionManager(context: Context) {
         get() = prefs.getBoolean(KEY_NOTIFICATIONS_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFICATIONS_ENABLED, value).apply()
 
+    // Defaults to empty rather than a fabricated token: a fake value would be sent to the
+    // backend and silently fail push delivery instead of surfacing as "not registered yet".
     var devicePushToken: String
-        get() = prefs.getString(KEY_DEVICE_TOKEN, "fcm_token_growfone_" + System.currentTimeMillis()) ?: "fcm_token_sample"
+        get() = prefs.getString(KEY_DEVICE_TOKEN, "") ?: ""
         set(value) = prefs.edit().putString(KEY_DEVICE_TOKEN, value).apply()
 
     var themeMode: String

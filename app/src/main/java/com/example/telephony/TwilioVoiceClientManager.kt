@@ -5,12 +5,14 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.data.model.CallDirection
 import com.example.data.model.CapabilityTokenDto
 import com.example.data.repository.BizVoiceRepository
 import com.twilio.audioswitch.AudioDevice
 import com.twilio.audioswitch.AudioSwitch
 import com.twilio.voice.Call
 import com.twilio.voice.CallException
+import com.twilio.voice.CallInvite
 import com.twilio.voice.ConnectOptions
 import com.twilio.voice.Voice
 import kotlinx.coroutines.*
@@ -64,6 +66,7 @@ class TwilioVoiceClientManager(
         val toPhoneNumber: String,
         val call: Call? = null,
         val startTime: Long = System.currentTimeMillis(),
+        val direction: CallDirection = CallDirection.OUTGOING,
         var hasRung: Boolean = false,
         var hasConnected: Boolean = false
     )
@@ -296,74 +299,7 @@ class TwilioVoiceClientManager(
                 Log.i(TAG, "Connecting real Twilio Voice call: sessionId=$sessionId, clientIdentity=$clientIdentity, To=$cleanDestination")
 
                 // Step 3: Implement real Call.Listener
-                val callListener = object : Call.Listener {
-                    override fun onConnectFailure(call: Call, error: CallException) {
-                        Log.e(TAG, "Twilio Call.Listener onConnectFailure: code=${error.errorCode}, message=${error.message}, explanation=${error.explanation}")
-                        val session = activeSession
-                        val wasRinging = session?.hasRung == true
-                        val wasConnected = session?.hasConnected == true
-                        
-                        stopAudioRouting()
-                        activeTwilioCall = null
-                        activeSession = null
-
-                        val reason = resolveDisconnectReason(
-                            error = error,
-                            wasRinging = wasRinging,
-                            wasConnected = wasConnected,
-                            durationSeconds = 0L
-                        )
-                        eventListener?.onConnectFailure(sessionId, reason)
-                    }
-
-                    override fun onRinging(call: Call) {
-                        Log.i(TAG, "Twilio Call.Listener onRinging: callSid=${call.sid}")
-                        activeSession?.hasRung = true
-                        eventListener?.onRinging(sessionId)
-                    }
-
-                    override fun onConnected(call: Call) {
-                        Log.i(TAG, "Twilio Call.Listener onConnected: callSid=${call.sid}, from=${call.from}, to=${call.to}")
-                        activeSession?.hasConnected = true
-                        activeSession = activeSession?.copy(startTime = System.currentTimeMillis())
-                        eventListener?.onConnected(sessionId)
-                    }
-
-                    override fun onReconnecting(call: Call, error: CallException) {
-                        Log.w(TAG, "Twilio Call.Listener onReconnecting: code=${error.errorCode}, message=${error.message}")
-                        eventListener?.onReconnecting(sessionId)
-                    }
-
-                    override fun onReconnected(call: Call) {
-                        Log.i(TAG, "Twilio Call.Listener onReconnected: callSid=${call.sid}")
-                        eventListener?.onConnected(sessionId)
-                    }
-
-                    override fun onDisconnected(call: Call, error: CallException?) {
-                        if (error != null) {
-                            Log.w(TAG, "Twilio Call.Listener onDisconnected with error: code=${error.errorCode}, message=${error.message}")
-                        } else {
-                            Log.i(TAG, "Twilio Call.Listener onDisconnected: callSid=${call.sid}")
-                        }
-                        
-                        val session = activeSession
-                        val duration = session?.let { (System.currentTimeMillis() - it.startTime) / 1000 } ?: 0L
-                        val wasRinging = session?.hasRung == true
-                        val wasConnected = session?.hasConnected == true
-
-                        stopAudioRouting()
-                        activeTwilioCall = null
-                        activeSession = null
-
-                        val reason = resolveDisconnectReason(
-                            error = error,
-                            wasRinging = wasRinging,
-                            wasConnected = wasConnected,
-                            durationSeconds = duration
-                        )
-                        eventListener?.onDisconnected(sessionId, duration, reason)
-                    }
-                }
+                val callListener = buildCallListener(sessionId, CallDirection.OUTGOING)
 
                 // Step 4: Activate audio and invoke Voice.connect()
                 startAudioRouting()
@@ -374,7 +310,8 @@ class TwilioVoiceClientManager(
                     clientIdentity = clientIdentity,
                     toPhoneNumber = cleanDestination,
                     call = twilioCall,
-                    startTime = System.currentTimeMillis()
+                    startTime = System.currentTimeMillis(),
+                    direction = CallDirection.OUTGOING
                 )
 
                 // Notify caller that call initiation was accepted by SDK
@@ -397,6 +334,164 @@ class TwilioVoiceClientManager(
             }
         }
     }
+
+    /**
+     * Accepts a real inbound CallInvite delivered by the Twilio SDK.
+     *
+     * This is the counterpart to connectOutbound(): the TwiML <Client> leg created by the
+     * backend is only bridged once CallInvite.accept() is invoked, so without this the
+     * call dies as an unbridged 480 no-answer.
+     */
+    fun acceptIncoming(callInvite: CallInvite, onResult: (Result<String>) -> Unit) {
+        val hasMicPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasMicPermission) {
+            val err = "Microphone permission is required to answer calls."
+            Log.e(TAG, "acceptIncoming aborted: $err")
+            onResult(Result.failure(SecurityException(err)))
+            return
+        }
+
+        val sessionId = "call_in_" + UUID.randomUUID().toString().take(12)
+        val remoteNumber = resolveRemoteNumber(callInvite)
+
+        Log.i(TAG, "Accepting incoming CallInvite sid=${callInvite.callSid} from=$remoteNumber")
+
+        try {
+            startAudioRouting()
+            val call = callInvite.accept(context, buildCallListener(sessionId, CallDirection.INCOMING))
+            activeTwilioCall = call
+            activeSession = VoiceSession(
+                sessionId = sessionId,
+                clientIdentity = callInvite.to ?: "",
+                toPhoneNumber = remoteNumber,
+                call = call,
+                startTime = System.currentTimeMillis(),
+                direction = CallDirection.INCOMING
+            )
+            onResult(Result.success(sessionId))
+        } catch (e: Exception) {
+            Log.e(TAG, "CallInvite.accept failed: ${e.message}", e)
+            stopAudioRouting()
+            activeTwilioCall = null
+            activeSession = null
+            onResult(Result.failure(e))
+            eventListener?.onConnectFailure(
+                sessionId,
+                DisconnectReason(
+                    title = "Unable to Answer Call",
+                    userFriendlyMessage = e.message ?: "Could not connect to the incoming call."
+                )
+            )
+        }
+    }
+
+    /**
+     * Rejects a real inbound CallInvite, telling Twilio the user declined so the PSTN
+     * caller gets a final call status instead of a silent no-answer.
+     */
+    fun rejectIncoming(callInvite: CallInvite) {
+        Log.i(TAG, "Rejecting incoming CallInvite sid=${callInvite.callSid}")
+        try {
+            callInvite.reject(context)
+        } catch (e: Exception) {
+            Log.e(TAG, "CallInvite.reject failed: ${e.message}", e)
+        }
+        stopAudioRouting()
+        activeTwilioCall = null
+        activeSession = null
+    }
+
+    /**
+     * The inbound leg's caller id is the PSTN number Twilio was dialled from, delivered on
+     * the invite's from field. Custom parameters are preferred because the backend also
+     * forwards the caller name there.
+     */
+    private fun resolveRemoteNumber(callInvite: CallInvite): String {
+        val params = callInvite.customParameters
+        val fromParams = params?.get("From") ?: params?.get("from")
+        if (!fromParams.isNullOrBlank()) return fromParams
+        val from = callInvite.from
+        return if (from.isNullOrBlank()) "" else from
+    }
+
+    private fun resolveRemoteName(callInvite: CallInvite): String? {
+        val params = callInvite.customParameters
+        return params?.get("CallerName") ?: params?.get("caller_name")
+    }
+
+    private fun buildCallListener(sessionId: String, direction: CallDirection): Call.Listener =
+        object : Call.Listener {
+            override fun onConnectFailure(call: Call, error: CallException) {
+                Log.e(TAG, "Call.Listener onConnectFailure [$direction]: code=${error.errorCode}, message=${error.message}, explanation=${error.explanation}")
+                val session = activeSession
+                val wasRinging = session?.hasRung == true
+                val wasConnected = session?.hasConnected == true
+
+                stopAudioRouting()
+                activeTwilioCall = null
+                activeSession = null
+
+                val reason = resolveDisconnectReason(
+                    error = error,
+                    wasRinging = wasRinging,
+                    wasConnected = wasConnected,
+                    durationSeconds = 0L
+                )
+                eventListener?.onConnectFailure(sessionId, reason)
+            }
+
+            override fun onRinging(call: Call) {
+                Log.i(TAG, "Call.Listener onRinging [$direction]: callSid=${call.sid}")
+                activeSession?.hasRung = true
+                eventListener?.onRinging(sessionId)
+            }
+
+            override fun onConnected(call: Call) {
+                Log.i(TAG, "Call.Listener onConnected [$direction]: callSid=${call.sid}, from=${call.from}, to=${call.to}")
+                activeSession?.hasConnected = true
+                activeSession = activeSession?.copy(startTime = System.currentTimeMillis())
+                eventListener?.onConnected(sessionId)
+            }
+
+            override fun onReconnecting(call: Call, error: CallException) {
+                Log.w(TAG, "Call.Listener onReconnecting [$direction]: code=${error.errorCode}, message=${error.message}")
+                eventListener?.onReconnecting(sessionId)
+            }
+
+            override fun onReconnected(call: Call) {
+                Log.i(TAG, "Call.Listener onReconnected [$direction]: callSid=${call.sid}")
+                eventListener?.onConnected(sessionId)
+            }
+
+            override fun onDisconnected(call: Call, error: CallException?) {
+                if (error != null) {
+                    Log.w(TAG, "Call.Listener onDisconnected with error [$direction]: code=${error.errorCode}, message=${error.message}")
+                } else {
+                    Log.i(TAG, "Call.Listener onDisconnected [$direction]: callSid=${call.sid}")
+                }
+
+                val session = activeSession
+                val duration = session?.let { (System.currentTimeMillis() - it.startTime) / 1000 } ?: 0L
+                val wasRinging = session?.hasRung == true
+                val wasConnected = session?.hasConnected == true
+
+                stopAudioRouting()
+                activeTwilioCall = null
+                activeSession = null
+
+                val reason = resolveDisconnectReason(
+                    error = error,
+                    wasRinging = wasRinging,
+                    wasConnected = wasConnected,
+                    durationSeconds = duration
+                )
+                eventListener?.onDisconnected(sessionId, duration, reason)
+            }
+        }
 
     /**
      * Disconnects the active Twilio Call.
