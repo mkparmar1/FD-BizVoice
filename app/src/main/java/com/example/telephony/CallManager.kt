@@ -71,8 +71,19 @@ class CallManager(
      * when the app is backgrounded and posts a notification instead.
      */
     fun setRingingAudible(audible: Boolean) {
+        val wasAudible = ringtoneAudible
         ringtoneAudible = audible
-        if (!audible) stopAllRingingAndTones()
+        if (!audible) {
+            stopAllRingingAndTones()
+            return
+        }
+
+        // Back in the foreground mid-ring: the notification that was carrying the sound
+        // is being dismissed, so the local ringtone has to take over again.
+        val current = _activeCallFlow.value
+        if (!wasAudible && current.state == CallState.RINGING && current.direction == CallDirection.INCOMING) {
+            startIncomingRingingLoop()
+        }
     }
 
     private val _activeCallFlow = MutableStateFlow(ActiveCallInfo())
@@ -367,6 +378,7 @@ class CallManager(
 
         pendingCallInvite = null
         stopAllRingingAndTones()
+        IncomingCallNotifier.cancel(context)
         autoDismissJob?.cancel()
 
         saveCallRecord(
@@ -427,6 +439,7 @@ class CallManager(
         if (current.state != CallState.RINGING && current.state != CallState.PREPARING) return
 
         stopAllRingingAndTones()
+        IncomingCallNotifier.cancel(context)
         autoDismissJob?.cancel()
 
         try {
@@ -472,6 +485,7 @@ class CallManager(
     fun declineIncomingCall() {
         val current = _activeCallFlow.value
         stopAllRingingAndTones()
+        IncomingCallNotifier.cancel(context)
         autoDismissJob?.cancel()
 
         pendingCallInvite?.let { invite ->

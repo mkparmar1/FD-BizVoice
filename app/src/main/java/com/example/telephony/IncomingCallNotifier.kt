@@ -12,6 +12,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.example.MainActivity
 import com.example.ui.IncomingCallActivity
 
 /**
@@ -82,6 +83,20 @@ object IncomingCallNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // Android 14+ only honours the full-screen intent when the user has granted it, so
+        // the heads-up notification is often all they see; it must be answerable as-is.
+        val answerIntent = PendingIntent.getActivity(
+            context,
+            2,
+            Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_ANSWER_CALL, true)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.sym_action_call)
             .setContentTitle("Incoming call")
@@ -95,6 +110,7 @@ object IncomingCallNotifier {
             .setContentIntent(fullScreenIntent)
             .setFullScreenIntent(fullScreenIntent, true)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declineIntent)
+            .addAction(android.R.drawable.sym_action_call, "Answer", answerIntent)
 
         val notification: Notification = builder.build()
 

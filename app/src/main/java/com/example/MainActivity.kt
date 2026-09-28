@@ -1,6 +1,7 @@
 package com.example
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -25,6 +26,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.data.model.CallDirection
+import com.example.telephony.CallState
+import com.example.telephony.IncomingCallNotifier
 import com.example.ui.navigation.Screen
 import com.example.ui.screens.admin.AdminAnalyticsScreen
 import com.example.ui.screens.admin.AdminConsoleScreen
@@ -48,6 +52,11 @@ import kotlinx.coroutines.flow.collect
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        /** Set by the notification's Answer action. */
+        const val EXTRA_ANSWER_CALL = "com.example.extra.ANSWER_CALL"
+    }
+
     private lateinit var appContainer: BizVoiceAppContainer
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,6 +65,7 @@ class MainActivity : ComponentActivity() {
         // on the same CallManager this UI observes.
         appContainer = BizVoiceApplication.container(applicationContext)
         enableEdgeToEdge()
+        handleCallIntent(intent)
 
         setContent {
             val themeMode by appContainer.sessionManager.themeModeFlow.collectAsState(initial = appContainer.sessionManager.themeMode)
@@ -69,6 +79,42 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleCallIntent(intent)
+    }
+
+    // Visibility follows the Activity's start/stop, not the composition: a composition
+    // outlives Home and the lock screen, which left isUiVisible true in the background,
+    // so a push posted no notification and rang into an overlay nobody could see.
+    override fun onStart() {
+        super.onStart()
+        appContainer.isUiVisible = true
+        IncomingCallNotifier.cancel(applicationContext)
+        appContainer.callManager.setRingingAudible(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        appContainer.isUiVisible = false
+
+        // Leaving while a call is still ringing: hand it to the notification so the user
+        // keeps a way to answer it.
+        val active = appContainer.callManager.activeCallFlow.value
+        if (active.state == CallState.RINGING && active.direction == CallDirection.INCOMING && !isChangingConfigurations) {
+            appContainer.callManager.setRingingAudible(false)
+            IncomingCallNotifier.show(applicationContext, active.remotePhoneNumber, active.remoteName)
+        }
+    }
+
+    private fun handleCallIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_ANSWER_CALL, false) != true) return
+        intent.removeExtra(EXTRA_ANSWER_CALL)
+        IncomingCallNotifier.cancel(applicationContext)
+        appContainer.callManager.acceptIncomingCall()
     }
 }
 
@@ -109,13 +155,6 @@ fun BizVoiceNavigation(appContainer: BizVoiceAppContainer) {
                 appContainer.incomingCallRegistrar.registerForIncomingCalls()
             }
         }
-    }
-
-    DisposableEffect(Unit) {
-        appContainer.isUiVisible = true
-        // The in-process ringtone is the right one whenever the UI can be seen.
-        appContainer.callManager.setRingingAudible(true)
-        onDispose { appContainer.isUiVisible = false }
     }
 
     // Automatically navigate to Login when 401 Unauthorized occurs

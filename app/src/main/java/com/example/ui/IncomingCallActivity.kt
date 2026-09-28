@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -13,6 +14,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.example.BizVoiceApplication
+import com.example.MainActivity
 import com.example.data.model.CallDirection
 import com.example.telephony.CallState
 import com.example.telephony.IncomingCallNotifier
@@ -48,6 +50,20 @@ class IncomingCallActivity : ComponentActivity() {
                     activeCall.direction == CallDirection.INCOMING
                 if (!stillRinging) {
                     IncomingCallNotifier.cancel(applicationContext)
+                    // Answered: the in-call controls live in MainActivity, which may be
+                    // backgrounded or not running at all, so bring it up before leaving.
+                    val answered = activeCall.state != CallState.IDLE &&
+                        activeCall.state != CallState.ENDED &&
+                        activeCall.direction == CallDirection.INCOMING
+                    if (answered) {
+                        startActivity(
+                            Intent(this@IncomingCallActivity, MainActivity::class.java).addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            )
+                        )
+                    }
                     finish()
                 }
             }
